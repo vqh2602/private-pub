@@ -1,14 +1,4 @@
-import {
-  AccountRole as DatabaseAccountRole,
-  DependencyScope,
-  JobStatus,
-  PreviewStatus,
-  Prisma,
-  PrismaClient,
-  type PackageFile as DatabaseFile,
-  type PackageVersion as DatabaseVersion,
-  type Score as DatabaseScore
-} from "@prisma/client";
+import { AccountRole as DatabaseAccountRole, DependencyScope, JobStatus, PreviewStatus, Prisma, PrismaClient, type PackageFile as DatabaseFile, type PackageVersion as DatabaseVersion, type Score as DatabaseScore } from "@prisma/client";
 import type { PackageDetail, PackageFile, PackageSummary, PackageVersion, Score } from "@private-pub/contracts";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
@@ -34,7 +24,7 @@ const emptyScore: Score = {
   popularityScore: 0,
   maintenanceScore: 0,
   tags: [],
-  breakdown: []
+  breakdown: [],
 };
 
 export class PrismaRegistryRepository implements RegistryRepository {
@@ -51,10 +41,17 @@ export class PrismaRegistryRepository implements RegistryRepository {
     await this.prisma.$connect();
     // Fail during startup when migrations have not created the registry tables.
     await this.prisma.package.count();
-    if (await this.prisma.account.count() === 0) {
+    if ((await this.prisma.account.count()) === 0) {
       const username = process.env.DEFAULT_ADMIN_USERNAME ?? "admin";
       const password = process.env.DEFAULT_ADMIN_PASSWORD ?? "admin";
-      await this.prisma.account.create({ data: { username, passwordHash: await hashPassword(password), role: DatabaseAccountRole.SUPER_ADMIN, mustChangePassword: true } });
+      await this.prisma.account.create({
+        data: {
+          username,
+          passwordHash: await hashPassword(password),
+          role: DatabaseAccountRole.SUPER_ADMIN,
+          mustChangePassword: true,
+        },
+      });
       console.warn(`[security] Created initial super-admin account '${username}'. Change its default password immediately.`);
     }
     await this.backfillEmptyScores();
@@ -64,13 +61,48 @@ export class PrismaRegistryRepository implements RegistryRepository {
     await this.prisma.$disconnect();
   }
 
-  async search(query: string, filters: { sdk?: string; platform?: string; publisher?: string; hasPreview?: boolean; sort?: string }) {
+  async getStats() {
+    const [packages, versions, analyzedVersions] = await this.prisma.$transaction([
+      this.prisma.package.count(),
+      this.prisma.packageVersion.count(),
+      this.prisma.packageVersion.count({
+        where: { scores: { some: {} } },
+      }),
+    ]);
+    return { packages, versions, analyzedVersions };
+  }
+
+  async search(
+    query: string,
+    filters: {
+      sdk?: string[];
+      platform?: string[];
+      publisher?: string;
+      hasPreview?: boolean;
+      verifiedPublisher?: boolean;
+      minScore?: number;
+      sort?: string;
+    },
+  ) {
     const packages = await this.prisma.package.findMany({
       where: {
-        ...(query ? { OR: [{ name: { contains: query, mode: "insensitive" } }, { description: { contains: query, mode: "insensitive" } }] } : {}),
-        ...(filters.publisher ? { publisher: { publisherId: filters.publisher } } : {})
+        ...(query
+          ? {
+              OR: [{ name: { contains: query, mode: "insensitive" } }, { description: { contains: query, mode: "insensitive" } }],
+            }
+          : {}),
+        ...(filters.publisher ? { publisher: { publisherId: filters.publisher } } : {}),
       },
-      include: { publisher: true, versions: { include: { files: true, scores: { orderBy: { computedAt: "desc" }, take: 1 }, dependencies: true } } }
+      include: {
+        publisher: true,
+        versions: {
+          include: {
+            files: true,
+            scores: { orderBy: { computedAt: "desc" }, take: 1 },
+            dependencies: true,
+          },
+        },
+      },
     });
     let summaries = packages.map((item) => this.summary(item)).filter((item): item is PackageSummary => Boolean(item));
     summaries = summaries.filter((summary) => {
@@ -79,19 +111,26 @@ export class PrismaRegistryRepository implements RegistryRepository {
       const pubspec = jsonRecord(latest.pubspecJson);
       const isFlutter = Boolean(jsonRecord(pubspec.dependencies).flutter) || Boolean(jsonRecord(pubspec.environment).flutter) || Boolean(pubspec.flutter);
       const platforms = platformsFromPubspec(pubspec);
-      return (!filters.sdk || filters.sdk === "any" || (filters.sdk === "flutter" ? isFlutter : !isFlutter)) &&
-        (!filters.platform || platforms.includes(filters.platform)) &&
-        (filters.hasPreview === undefined || summary.hasPreview === filters.hasPreview);
+      return (!filters.sdk?.length || filters.sdk.includes(isFlutter ? "flutter" : "dart")) && (!filters.platform?.length || filters.platform.some((platform) => (platform === "desktop" ? platforms.some((value) => ["linux", "macos", "windows"].includes(value)) : platforms.includes(platform)))) && (filters.hasPreview === undefined || summary.hasPreview === filters.hasPreview) && (filters.verifiedPublisher === undefined || Boolean(source.publisher?.verifiedAt) === filters.verifiedPublisher) && (filters.minScore === undefined || summary.score >= filters.minScore);
     });
     const sort = filters.sort ?? "relevance";
-    summaries.sort((a, b) => sort === "updated" ? b.updatedAt.localeCompare(a.updatedAt) : sort === "downloads" ? b.downloads30d - a.downloads30d : sort === "score" ? b.score - a.score : relevance(b, query) - relevance(a, query));
+    summaries.sort((a, b) => (sort === "updated" ? b.updatedAt.localeCompare(a.updatedAt) : sort === "downloads" ? b.downloads30d - a.downloads30d : sort === "score" ? b.score - a.score : relevance(b, query) - relevance(a, query)));
     return summaries;
   }
 
   async getPackage(name: string): Promise<PackageDetail | null> {
     const item = await this.prisma.package.findUnique({
       where: { name },
-      include: { publisher: true, versions: { include: { files: true, scores: { orderBy: { computedAt: "desc" }, take: 1 }, dependencies: true } } }
+      include: {
+        publisher: true,
+        versions: {
+          include: {
+            files: true,
+            scores: { orderBy: { computedAt: "desc" }, take: 1 },
+            dependencies: true,
+          },
+        },
+      },
     });
     if (!item) return null;
     const latest = selectLatest(item.versions);
@@ -110,59 +149,96 @@ export class PrismaRegistryRepository implements RegistryRepository {
         dartSdkConstraint: dartConstraint,
         dartSdkMinimum: minimumVersion(dartConstraint),
         flutterConstraint,
-        flutterMinimum: flutterConstraint ? minimumVersion(flutterConstraint) : null
+        flutterMinimum: flutterConstraint ? minimumVersion(flutterConstraint) : null,
       },
       dependencies: latest.dependencies.map((dependency) => ({
         name: dependency.name,
         constraint: dependency.constraintRaw,
         scope: dependencyScopeFromDatabase(dependency.scope),
         source: sourceFromDatabase(dependency.sourceKind),
-        registry: registryFor(dependency.sourceKind, dependency.name, privateNames)
+        registry: registryFor(dependency.sourceKind, dependency.name, privateNames),
       })),
       score: scoreFromDatabase(latest.scores[0]),
       readme: latest.readmeHtml ?? `# ${item.name}`,
       changelog: latest.changelogHtml ?? "# Changelog\n\nNo changelog was included.",
-      files: await Promise.all(latest.files.sort((a, b) => a.sortOrder - b.sortOrder).map((file) => this.mapFile(file)))
+      files: await Promise.all(latest.files.sort((a, b) => a.sortOrder - b.sortOrder).map((file) => this.mapFile(file))),
     };
   }
 
   async getVersion(name: string, version: string) {
-    const item = await this.prisma.packageVersion.findFirst({ where: { package: { name }, version } });
+    const item = await this.prisma.packageVersion.findFirst({
+      where: { package: { name }, version },
+    });
     return item ? mapVersion(item) : null;
   }
 
   async getFiles(name: string, version: string) {
-    const item = await this.prisma.packageVersion.findFirst({ where: { package: { name }, version }, include: { files: { orderBy: { sortOrder: "asc" } } } });
+    const item = await this.prisma.packageVersion.findFirst({
+      where: { package: { name }, version },
+      include: { files: { orderBy: { sortOrder: "asc" } } },
+    });
     return item ? Promise.all(item.files.map((file) => this.mapFile(file))) : null;
   }
 
   async getFile(name: string, version: string, path: string) {
-    const item = await this.prisma.packageFile.findFirst({ where: { version: { package: { name }, version }, path } });
+    const item = await this.prisma.packageFile.findFirst({
+      where: { version: { package: { name }, version }, path },
+    });
     return item ? this.mapFile(item) : null;
   }
 
   async getScore(name: string, version: string) {
-    const item = await this.prisma.score.findFirst({ where: { version: { package: { name }, version } }, orderBy: { computedAt: "desc" } });
+    const item = await this.prisma.score.findFirst({
+      where: { version: { package: { name }, version } },
+      orderBy: { computedAt: "desc" },
+    });
     return item ? scoreFromDatabase(item) : null;
   }
 
   async setRetraction(name: string, version: string, retracted: boolean) {
-    const item = await this.prisma.packageVersion.findFirst({ where: { package: { name }, version }, select: { id: true } });
+    const item = await this.prisma.packageVersion.findFirst({
+      where: { package: { name }, version },
+      select: { id: true },
+    });
     if (!item) return null;
-    const updated = await this.prisma.packageVersion.update({ where: { id: item.id }, data: { retractedAt: retracted ? new Date() : null } });
+    const updated = await this.prisma.packageVersion.update({
+      where: { id: item.id },
+      data: { retractedAt: retracted ? new Date() : null },
+    });
     return mapVersion(updated);
   }
 
   async setDiscontinued(name: string, discontinued: boolean) {
-    const result = await this.prisma.package.updateMany({ where: { name }, data: { isDiscontinued: discontinued } });
+    const result = await this.prisma.package.updateMany({
+      where: { name },
+      data: { isDiscontinued: discontinued },
+    });
     if (!result.count) return null;
-    const item = await this.prisma.package.findUnique({ where: { name }, include: { publisher: true, versions: { include: { files: true, scores: { orderBy: { computedAt: "desc" }, take: 1 }, dependencies: true } } } });
+    const item = await this.prisma.package.findUnique({
+      where: { name },
+      include: {
+        publisher: true,
+        versions: {
+          include: {
+            files: true,
+            scores: { orderBy: { computedAt: "desc" }, take: 1 },
+            dependencies: true,
+          },
+        },
+      },
+    });
     return item ? this.summary(item) : null;
   }
 
   async createImport(input: Omit<ImportJobRecord, "id" | "status" | "createdAt">) {
     const item = await this.prisma.importJob.create({
-      data: { sourceRegistry: "pub.dev", packageName: input.packageName, mode: input.mode, requestedVersionsJson: input.versions, status: JobStatus.QUEUED }
+      data: {
+        sourceRegistry: "pub.dev",
+        packageName: input.packageName,
+        mode: input.mode,
+        requestedVersionsJson: input.versions,
+        status: JobStatus.QUEUED,
+      },
     });
     return mapImport(item);
   }
@@ -182,13 +258,21 @@ export class PrismaRegistryRepository implements RegistryRepository {
   }
 
   async createSession(accountId: string, tokenHash: string, expiresAt: string) {
-    await this.prisma.authSession.create({ data: { accountId, tokenHash, expiresAt: new Date(expiresAt) } });
+    await this.prisma.authSession.create({
+      data: { accountId, tokenHash, expiresAt: new Date(expiresAt) },
+    });
   }
 
   async authenticateSession(tokenHash: string) {
-    const item = await this.prisma.authSession.findUnique({ where: { tokenHash }, include: { account: true } });
+    const item = await this.prisma.authSession.findUnique({
+      where: { tokenHash },
+      include: { account: true },
+    });
     if (!item || item.expiresAt <= new Date() || !item.account.isActive) return null;
-    await this.prisma.authSession.update({ where: { id: item.id }, data: { lastSeenAt: new Date() } });
+    await this.prisma.authSession.update({
+      where: { id: item.id },
+      data: { lastSeenAt: new Date() },
+    });
     return mapAccount(item.account);
   }
 
@@ -198,16 +282,29 @@ export class PrismaRegistryRepository implements RegistryRepository {
 
   async updatePassword(accountId: string, passwordHash: string) {
     await this.prisma.$transaction([
-      this.prisma.account.update({ where: { id: accountId }, data: { passwordHash, mustChangePassword: false } }),
-      this.prisma.authSession.deleteMany({ where: { accountId } })
+      this.prisma.account.update({
+        where: { id: accountId },
+        data: { passwordHash, mustChangePassword: false },
+      }),
+      this.prisma.authSession.deleteMany({ where: { accountId } }),
     ]);
   }
 
   async listTokens(accountId: string) {
-    return (await this.prisma.apiToken.findMany({ where: { accountId }, orderBy: { createdAt: "desc" } })).map((item) => ({
-      id: item.publicId, name: item.name, prefix: item.prefix, scopes: stringArray(item.scopesJson),
-      expiresAt: item.expiresAt?.toISOString() ?? null, lastUsedAt: item.lastUsedAt?.toISOString() ?? null,
-      revokedAt: item.revokedAt?.toISOString() ?? null, createdAt: item.createdAt.toISOString()
+    return (
+      await this.prisma.apiToken.findMany({
+        where: { accountId },
+        orderBy: { createdAt: "desc" },
+      })
+    ).map((item) => ({
+      id: item.publicId,
+      name: item.name,
+      prefix: item.prefix,
+      scopes: stringArray(item.scopesJson),
+      expiresAt: item.expiresAt?.toISOString() ?? null,
+      lastUsedAt: item.lastUsedAt?.toISOString() ?? null,
+      revokedAt: item.revokedAt?.toISOString() ?? null,
+      createdAt: item.createdAt.toISOString(),
     }));
   }
 
@@ -222,27 +319,47 @@ export class PrismaRegistryRepository implements RegistryRepository {
         prefix: token.prefix,
         scopesJson: token.scopes,
         expiresAt: token.expiresAt ? new Date(token.expiresAt) : null,
-        revokedAt: token.revokedAt ? new Date(token.revokedAt) : null
-      }
+        revokedAt: token.revokedAt ? new Date(token.revokedAt) : null,
+      },
     });
   }
 
   async authenticateToken(tokenHash: string) {
-    const item = await this.prisma.apiToken.findUnique({ where: { tokenHash }, include: { account: true } });
+    const item = await this.prisma.apiToken.findUnique({
+      where: { tokenHash },
+      include: { account: true },
+    });
     if (!item?.account?.isActive || item.revokedAt || (item.expiresAt && item.expiresAt <= new Date())) return null;
-    await this.prisma.apiToken.update({ where: { id: item.id }, data: { lastUsedAt: new Date() } });
-    return { id: item.account.id, username: item.account.username, role: mapAccount(item.account).role, scopes: stringArray(item.scopesJson) };
+    await this.prisma.apiToken.update({
+      where: { id: item.id },
+      data: { lastUsedAt: new Date() },
+    });
+    return {
+      id: item.account.id,
+      username: item.account.username,
+      role: mapAccount(item.account).role,
+      scopes: stringArray(item.scopesJson),
+    };
   }
 
   async revokeToken(id: string, accountId: string) {
-    const result = await this.prisma.apiToken.updateMany({ where: { publicId: id, accountId, revokedAt: null }, data: { revokedAt: new Date() } });
+    const result = await this.prisma.apiToken.updateMany({
+      where: { publicId: id, accountId, revokedAt: null },
+      data: { revokedAt: new Date() },
+    });
     return result.count > 0;
   }
 
   async publishArchive(archive: Buffer, actor: PublishActor) {
     const parsed = await parsePackageArchive(archive);
-    const existingPackage = await this.prisma.package.findUnique({ where: { name: parsed.name }, select: { id: true } });
-    const duplicate = await this.prisma.packageVersion.findFirst({ where: { package: { name: parsed.name }, version: parsed.version }, select: { id: true } });
+    const existingPackage = await this.prisma.package.findUnique({
+      where: { name: parsed.name },
+      select: { id: true },
+    });
+    const duplicate = await this.prisma.packageVersion.findFirst({
+      where: { package: { name: parsed.name }, version: parsed.version },
+      select: { id: true },
+    });
     if (duplicate) throw new Error(`Version ${parsed.version} of ${parsed.name} already exists.`);
 
     const archivePath = join(this.storageDirectory, `${parsed.name}-${parsed.version}.tar.gz`);
@@ -252,22 +369,26 @@ export class PrismaRegistryRepository implements RegistryRepository {
     await mkdir(previewDirectory, { recursive: true });
     await writeFile(temporaryPath, archive, { flag: "wx" });
     await rename(temporaryPath, archivePath);
-    const files = await Promise.all(parsed.files.map(async (file, index) => {
-      const previewPath = file.content === undefined ? `${archivePath}#${file.path}` : join(previewDirectory, `${createHash("sha256").update(file.path).digest("hex")}.txt`);
-      if (file.content !== undefined) await writeFile(previewPath, file.content, "utf8");
-      return {
-        path: file.path,
-        kind: file.type,
-        sizeBytes: BigInt(file.size ?? 0),
-        mimeType: null,
-        sha256: createHash("sha256").update(file.content ?? `${file.path}:${file.size ?? 0}`).digest("hex"),
-        storageKey: previewPath,
-        isText: file.content !== undefined,
-        language: file.language,
-        previewStatus: file.preview && file.preview !== "unsupported" ? PreviewStatus.READY : PreviewStatus.UNSUPPORTED,
-        sortOrder: index
-      };
-    }));
+    const files = await Promise.all(
+      parsed.files.map(async (file, index) => {
+        const previewPath = file.content === undefined ? `${archivePath}#${file.path}` : join(previewDirectory, `${createHash("sha256").update(file.path).digest("hex")}.txt`);
+        if (file.content !== undefined) await writeFile(previewPath, file.content, "utf8");
+        return {
+          path: file.path,
+          kind: file.type,
+          sizeBytes: BigInt(file.size ?? 0),
+          mimeType: null,
+          sha256: createHash("sha256")
+            .update(file.content ?? `${file.path}:${file.size ?? 0}`)
+            .digest("hex"),
+          storageKey: previewPath,
+          isText: file.content !== undefined,
+          language: file.language,
+          previewStatus: file.preview && file.preview !== "unsupported" ? PreviewStatus.READY : PreviewStatus.UNSUPPORTED,
+          sortOrder: index,
+        };
+      }),
+    );
 
     try {
       await this.persistPackage(parsed, archivePath, files, actor);
@@ -276,18 +397,44 @@ export class PrismaRegistryRepository implements RegistryRepository {
       await rm(previewDirectory, { recursive: true, force: true });
       throw error;
     }
-    return { name: parsed.name, version: parsed.version, packageCreated: !existingPackage };
+    return {
+      name: parsed.name,
+      version: parsed.version,
+      packageCreated: !existingPackage,
+    };
   }
 
   async getArchive(name: string, version: string) {
-    const item = await this.prisma.packageVersion.findFirst({ where: { package: { name }, version }, select: { archiveObjectKey: true } });
+    const item = await this.prisma.packageVersion.findFirst({
+      where: { package: { name }, version },
+      select: { archiveObjectKey: true },
+    });
     if (!item) return null;
-    try { return await readFile(item.archiveObjectKey); } catch (error) { if (isMissingFile(error)) return null; throw error; }
+    try {
+      return await readFile(item.archiveObjectKey);
+    } catch (error) {
+      if (isMissingFile(error)) return null;
+      throw error;
+    }
   }
 
-  private async persistPackage(parsed: ParsedPackageArchive, archivePath: string, files: Array<{
-    path: string; kind: string; sizeBytes: bigint; mimeType: null; sha256: string; storageKey: string; isText: boolean; language?: string; previewStatus: PreviewStatus; sortOrder: number;
-  }>, actor: PublishActor) {
+  private async persistPackage(
+    parsed: ParsedPackageArchive,
+    archivePath: string,
+    files: Array<{
+      path: string;
+      kind: string;
+      sizeBytes: bigint;
+      mimeType: null;
+      sha256: string;
+      storageKey: string;
+      isText: boolean;
+      language?: string;
+      previewStatus: PreviewStatus;
+      sortOrder: number;
+    }>,
+    actor: PublishActor,
+  ) {
     const publishedAt = new Date();
     const topics = stringArray(parsed.pubspec.topics);
     const platforms = platformsFromPubspec(parsed.pubspec);
@@ -296,12 +443,25 @@ export class PrismaRegistryRepository implements RegistryRepository {
       const publisher = await transaction.publisher.upsert({
         where: { publisherId: "local.private" },
         update: {},
-        create: { publisherId: "local.private", displayName: "Local private registry" }
+        create: {
+          publisherId: "local.private",
+          displayName: "Local private registry",
+        },
       });
       const packageRecord = await transaction.package.upsert({
         where: { name: parsed.name },
-        update: { description: parsed.description, topics, publisherId: publisher.id },
-        create: { name: parsed.name, normalizedName: parsed.name.toLowerCase(), description: parsed.description, topics, publisherId: publisher.id }
+        update: {
+          description: parsed.description,
+          topics,
+          publisherId: publisher.id,
+        },
+        create: {
+          name: parsed.name,
+          normalizedName: parsed.name.toLowerCase(),
+          description: parsed.description,
+          topics,
+          publisherId: publisher.id,
+        },
       });
       const versionRecord = await transaction.packageVersion.create({
         data: {
@@ -316,28 +476,80 @@ export class PrismaRegistryRepository implements RegistryRepository {
           publishedAt,
           publishedBy: actor.username ?? actor.id,
           isPrerelease: Boolean(semver.prerelease(parsed.version)),
-          sourceType: "native"
-        }
+          sourceType: "native",
+        },
       });
-      if (files.length) await transaction.packageFile.createMany({ data: files.map((file) => ({ ...file, packageVersionId: versionRecord.id })) });
-      if (parsed.dependencies.length) await transaction.dependency.createMany({ data: parsed.dependencies.map((dependency) => ({
-        packageVersionId: versionRecord.id,
-        scope: dependencyScopeToDatabase(dependency.scope),
-        name: dependency.name,
-        sourceKind: dependency.source,
-        constraintRaw: dependency.constraint,
-        isDirect: true
-      })) });
-      await transaction.score.create({ data: { packageVersionId: versionRecord.id, ...scoreData(calculatedScore) } });
-      const versions = await transaction.packageVersion.findMany({ where: { packageId: packageRecord.id }, select: { id: true, version: true, retractedAt: true } });
+      if (files.length)
+        await transaction.packageFile.createMany({
+          data: files.map((file) => ({
+            ...file,
+            packageVersionId: versionRecord.id,
+          })),
+        });
+      if (parsed.dependencies.length)
+        await transaction.dependency.createMany({
+          data: parsed.dependencies.map((dependency) => ({
+            packageVersionId: versionRecord.id,
+            scope: dependencyScopeToDatabase(dependency.scope),
+            name: dependency.name,
+            sourceKind: dependency.source,
+            constraintRaw: dependency.constraint,
+            isDirect: true,
+          })),
+        });
+      await transaction.score.create({
+        data: {
+          packageVersionId: versionRecord.id,
+          ...scoreData(calculatedScore),
+        },
+      });
+      const versions = await transaction.packageVersion.findMany({
+        where: { packageId: packageRecord.id },
+        select: { id: true, version: true, retractedAt: true },
+      });
       const latest = selectLatestRelease(versions)!;
-      await transaction.package.update({ where: { id: packageRecord.id }, data: { latestVersionId: latest.id } });
+      await transaction.package.update({
+        where: { id: packageRecord.id },
+        data: { latestVersionId: latest.id },
+      });
       await transaction.searchDocument.upsert({
         where: { packageId: packageRecord.id },
-        update: { packageVersionId: latest.id, name: parsed.name, description: parsed.description, readmeExcerpt: parsed.readme.slice(0, 500), topicsJson: topics, publisherIdentifier: publisher.publisherId, platformsJson: platforms, tagsJson: [], rankingFeaturesJson: {} },
-        create: { packageId: packageRecord.id, packageVersionId: latest.id, name: parsed.name, description: parsed.description, readmeExcerpt: parsed.readme.slice(0, 500), topicsJson: topics, publisherIdentifier: publisher.publisherId, platformsJson: platforms, tagsJson: [], rankingFeaturesJson: {} }
+        update: {
+          packageVersionId: latest.id,
+          name: parsed.name,
+          description: parsed.description,
+          readmeExcerpt: parsed.readme.slice(0, 500),
+          topicsJson: topics,
+          publisherIdentifier: publisher.publisherId,
+          platformsJson: platforms,
+          tagsJson: [],
+          rankingFeaturesJson: {},
+        },
+        create: {
+          packageId: packageRecord.id,
+          packageVersionId: latest.id,
+          name: parsed.name,
+          description: parsed.description,
+          readmeExcerpt: parsed.readme.slice(0, 500),
+          topicsJson: topics,
+          publisherIdentifier: publisher.publisherId,
+          platformsJson: platforms,
+          tagsJson: [],
+          rankingFeaturesJson: {},
+        },
       });
-      await transaction.auditLog.create({ data: { subjectType: "package_version", subjectId: `${parsed.name}@${parsed.version}`, actorId: actor.id, action: "package.publish", payloadJson: { sha256: parsed.sha256, publishedBy: actor.username ?? actor.id } } });
+      await transaction.auditLog.create({
+        data: {
+          subjectType: "package_version",
+          subjectId: `${parsed.name}@${parsed.version}`,
+          actorId: actor.id,
+          action: "package.publish",
+          payloadJson: {
+            sha256: parsed.sha256,
+            publishedBy: actor.username ?? actor.id,
+          },
+        },
+      });
     });
   }
 
@@ -347,8 +559,8 @@ export class PrismaRegistryRepository implements RegistryRepository {
       include: {
         files: { select: { path: true } },
         dependencies: true,
-        scores: { orderBy: { computedAt: "desc" }, take: 1 }
-      }
+        scores: { orderBy: { computedAt: "desc" }, take: 1 },
+      },
     });
     for (const version of versions) {
       const current = version.scores[0];
@@ -367,11 +579,14 @@ export class PrismaRegistryRepository implements RegistryRepository {
           name: dependency.name,
           constraint: dependency.constraintRaw,
           scope: dependencyScopeFromDatabase(dependency.scope),
-          source: sourceFromDatabase(dependency.sourceKind)
+          source: sourceFromDatabase(dependency.sourceKind),
         })),
-        downloads30d: current.downloadCount30d
+        downloads30d: current.downloadCount30d,
       });
-      await this.prisma.score.update({ where: { id: current.id }, data: scoreData(calculated) });
+      await this.prisma.score.update({
+        where: { id: current.id },
+        data: scoreData(calculated),
+      });
     }
   }
 
@@ -389,22 +604,40 @@ export class PrismaRegistryRepository implements RegistryRepository {
       updatedAt: item.updatedAt.toISOString(),
       downloads30d: latest.scores[0]?.downloadCount30d ?? 0,
       score: score.grantedPoints,
-      hasPreview: latest.files.some((file) => file.previewStatus === PreviewStatus.READY)
+      hasPreview: latest.files.some((file) => file.previewStatus === PreviewStatus.READY),
     };
   }
 
   private async mapFile(file: DatabaseFile): Promise<PackageFile> {
     let content: string | undefined;
     if (file.isText) {
-      try { content = await readFile(file.storageKey, "utf8"); } catch (error) { if (!isMissingFile(error)) throw error; }
+      try {
+        content = await readFile(file.storageKey, "utf8");
+      } catch (error) {
+        if (!isMissingFile(error)) throw error;
+      }
     }
-    const preview = file.previewStatus === PreviewStatus.READY ? previewForLanguage(file.language) : "unsupported" as const;
-    return { path: file.path, type: file.kind === "dir" ? "dir" : "file", size: Number(file.sizeBytes), language: file.language ?? undefined, preview, content };
+    const preview = file.previewStatus === PreviewStatus.READY ? previewForLanguage(file.language) : ("unsupported" as const);
+    return {
+      path: file.path,
+      type: file.kind === "dir" ? "dir" : "file",
+      size: Number(file.sizeBytes),
+      language: file.language ?? undefined,
+      preview,
+      content,
+    };
   }
 
   private async privatePackageNames(names: string[]) {
     if (!names.length) return new Set<string>();
-    return new Set((await this.prisma.package.findMany({ where: { name: { in: names } }, select: { name: true } })).map((item) => item.name));
+    return new Set(
+      (
+        await this.prisma.package.findMany({
+          where: { name: { in: names } },
+          select: { name: true },
+        })
+      ).map((item) => item.name),
+    );
   }
 }
 
@@ -416,13 +649,16 @@ function mapVersion(item: DatabaseVersion): PackageVersion {
     pubspec,
     publishedAt: item.publishedAt.toISOString(),
     publishedBy: item.publishedBy,
-    sdk: { dart: String(environment.sdk ?? "any"), ...(environment.flutter ? { flutter: String(environment.flutter) } : {}) },
+    sdk: {
+      dart: String(environment.sdk ?? "any"),
+      ...(environment.flutter ? { flutter: String(environment.flutter) } : {}),
+    },
     platforms: platformsFromPubspec(pubspec),
     archiveSha256: item.archiveSha256,
     retractedAt: item.retractedAt?.toISOString() ?? null,
     prerelease: item.isPrerelease,
     releaseChannel: releaseChannel(item.version),
-    sourceType: item.sourceType === "pubdev_import" ? "pubdev_import" : "native"
+    sourceType: item.sourceType === "pubdev_import" ? "pubdev_import" : "native",
   };
 }
 
@@ -435,7 +671,7 @@ function scoreFromDatabase(item?: DatabaseScore): Score {
     popularityScore: item.popularityScore,
     maintenanceScore: item.maintenanceScore,
     tags: stringArray(item.tagsJson),
-    breakdown: Array.isArray(item.breakdownJson) ? item.breakdownJson as Score["breakdown"] : []
+    breakdown: Array.isArray(item.breakdownJson) ? (item.breakdownJson as Score["breakdown"]) : [],
   };
 }
 
@@ -448,7 +684,7 @@ function scoreData(score: Score) {
     maintenanceScore: score.maintenanceScore,
     tagsJson: score.tags as Prisma.InputJsonArray,
     weightsJson: SCORE_WEIGHTS as Prisma.InputJsonObject,
-    breakdownJson: score.breakdown as Prisma.InputJsonArray
+    breakdownJson: score.breakdown as Prisma.InputJsonArray,
   };
 }
 
@@ -458,10 +694,14 @@ function isAutomaticPackageScore(value: Prisma.JsonValue) {
 }
 
 function hasScoreDetails(value: Prisma.JsonValue) {
-  return Array.isArray(value) && value.length > 0 && value.every((item) => {
-    const breakdown = jsonRecord(item);
-    return Array.isArray(breakdown.details);
-  });
+  return (
+    Array.isArray(value) &&
+    value.length > 0 &&
+    value.every((item) => {
+      const breakdown = jsonRecord(item);
+      return Array.isArray(breakdown.details);
+    })
+  );
 }
 
 function mapImport(item: { id: string; packageName: string; mode: string; status: JobStatus; requestedVersionsJson: Prisma.JsonValue; summaryJson: Prisma.JsonValue | null; createdAt: Date }): ImportJobRecord {
@@ -472,22 +712,48 @@ function mapImport(item: { id: string; packageName: string; mode: string; status
     mode: item.mode,
     status: item.status.toLowerCase() as ImportJobRecord["status"],
     createdAt: item.createdAt.toISOString(),
-    ...(item.summaryJson && typeof item.summaryJson === "object" && !Array.isArray(item.summaryJson) ? { summary: item.summaryJson as Record<string, unknown> } : {})
+    ...(item.summaryJson && typeof item.summaryJson === "object" && !Array.isArray(item.summaryJson) ? { summary: item.summaryJson as Record<string, unknown> } : {}),
   };
 }
 
-function selectLatest<T extends { version: string; retractedAt?: unknown }>(versions: T[]) { return selectLatestRelease(versions); }
-function compareDatabaseVersions(a: DatabaseVersion, b: DatabaseVersion) { return semver.rcompare(a.version, b.version); }
-function relevance(item: PackageSummary, query: string) { const value = query.toLowerCase(); return (item.name === value ? 1000 : item.name.includes(value) ? 500 : 0) + (item.description.toLowerCase().includes(value) ? 100 : 0) + item.score; }
-function jsonRecord(value: unknown): Record<string, unknown> { return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {}; }
-function stringArray(value: unknown) { return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : []; }
-function minimumVersion(constraint: string) { return constraint.match(/\d+\.\d+\.\d+/)?.[0] ?? constraint; }
-function platformsFromPubspec(pubspec: Record<string, unknown>) { const declared = Object.keys(jsonRecord(pubspec.platforms)); return declared.length ? declared : (pubspec.flutter || jsonRecord(pubspec.dependencies).flutter ? ["android", "ios", "web", "linux", "macos", "windows"] : []); }
-function dependencyScopeToDatabase(scope: "dependencies" | "dev_dependencies" | "dependency_overrides") { return scope === "dev_dependencies" ? DependencyScope.DEV_DEPENDENCIES : scope === "dependency_overrides" ? DependencyScope.DEPENDENCY_OVERRIDES : DependencyScope.DEPENDENCIES; }
-function dependencyScopeFromDatabase(scope: DependencyScope) { return scope === DependencyScope.DEV_DEPENDENCIES ? "dev_dependencies" as const : scope === DependencyScope.DEPENDENCY_OVERRIDES ? "dependency_overrides" as const : "dependencies" as const; }
-function sourceFromDatabase(source: string) { return source === "sdk" || source === "git" || source === "path" ? source : "hosted" as const; }
-function registryFor(source: string, name: string, privateNames: Set<string>) { return source === "sdk" ? "sdk" as const : source === "git" ? "git" as const : source === "path" ? "path" as const : privateNames.has(name) ? "private" as const : "pubdev" as const; }
-function previewForLanguage(language: string | null): PackageFile["preview"] { return language === "markdown" ? "markdown" : language === "yaml" || language === "json" ? "structured" : language === "image" ? "image" : "code"; }
+function selectLatest<T extends { version: string; retractedAt?: unknown }>(versions: T[]) {
+  return selectLatestRelease(versions);
+}
+function compareDatabaseVersions(a: DatabaseVersion, b: DatabaseVersion) {
+  return semver.rcompare(a.version, b.version);
+}
+function relevance(item: PackageSummary, query: string) {
+  const value = query.toLowerCase();
+  return (item.name === value ? 1000 : item.name.includes(value) ? 500 : 0) + (item.description.toLowerCase().includes(value) ? 100 : 0) + item.score;
+}
+function jsonRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+}
+function stringArray(value: unknown) {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+function minimumVersion(constraint: string) {
+  return constraint.match(/\d+\.\d+\.\d+/)?.[0] ?? constraint;
+}
+function platformsFromPubspec(pubspec: Record<string, unknown>) {
+  const declared = Object.keys(jsonRecord(pubspec.platforms));
+  return declared.length ? declared : pubspec.flutter || jsonRecord(pubspec.dependencies).flutter ? ["android", "ios", "web", "linux", "macos", "windows"] : [];
+}
+function dependencyScopeToDatabase(scope: "dependencies" | "dev_dependencies" | "dependency_overrides") {
+  return scope === "dev_dependencies" ? DependencyScope.DEV_DEPENDENCIES : scope === "dependency_overrides" ? DependencyScope.DEPENDENCY_OVERRIDES : DependencyScope.DEPENDENCIES;
+}
+function dependencyScopeFromDatabase(scope: DependencyScope) {
+  return scope === DependencyScope.DEV_DEPENDENCIES ? ("dev_dependencies" as const) : scope === DependencyScope.DEPENDENCY_OVERRIDES ? ("dependency_overrides" as const) : ("dependencies" as const);
+}
+function sourceFromDatabase(source: string) {
+  return source === "sdk" || source === "git" || source === "path" ? source : ("hosted" as const);
+}
+function registryFor(source: string, name: string, privateNames: Set<string>) {
+  return source === "sdk" ? ("sdk" as const) : source === "git" ? ("git" as const) : source === "path" ? ("path" as const) : privateNames.has(name) ? ("private" as const) : ("pubdev" as const);
+}
+function previewForLanguage(language: string | null): PackageFile["preview"] {
+  return language === "markdown" ? "markdown" : language === "yaml" || language === "json" ? "structured" : language === "image" ? "image" : "code";
+}
 function mapAccount(item: { id: string; username: string; passwordHash: string; role: DatabaseAccountRole; mustChangePassword: boolean; isActive: boolean }): AccountRecord {
   return {
     id: item.id,
@@ -495,7 +761,9 @@ function mapAccount(item: { id: string; username: string; passwordHash: string; 
     passwordHash: item.passwordHash,
     role: item.role === DatabaseAccountRole.SUPER_ADMIN ? "super_admin" : item.role === DatabaseAccountRole.ADMIN ? "admin" : "user",
     mustChangePassword: item.mustChangePassword,
-    isActive: item.isActive
+    isActive: item.isActive,
   };
 }
-function isMissingFile(error: unknown): error is NodeJS.ErrnoException { return error instanceof Error && "code" in error && error.code === "ENOENT"; }
+function isMissingFile(error: unknown): error is NodeJS.ErrnoException {
+  return error instanceof Error && "code" in error && error.code === "ENOENT";
+}

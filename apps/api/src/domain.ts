@@ -1,4 +1,4 @@
-import type { PackageDetail, PackageFile, PackageSummary, PackageVersion, Score } from "@private-pub/contracts";
+import type { PackageDetail, PackageFile, PackageSummary, PackageVersion, RegistryStats, Score } from "@private-pub/contracts";
 
 export interface ImportJobRecord {
   id: string;
@@ -58,7 +58,19 @@ export interface RegistryRepository {
   readonly mode: "demo" | "database";
   initialize(): Promise<void>;
   close?(): Promise<void>;
-  search(query: string, filters: { sdk?: string; platform?: string; publisher?: string; hasPreview?: boolean; sort?: string }): Promise<PackageSummary[]>;
+  getStats(): Promise<RegistryStats>;
+  search(
+    query: string,
+    filters: {
+      sdk?: string[];
+      platform?: string[];
+      publisher?: string;
+      hasPreview?: boolean;
+      verifiedPublisher?: boolean;
+      minScore?: number;
+      sort?: string;
+    },
+  ): Promise<PackageSummary[]>;
   getPackage(name: string): Promise<PackageDetail | null>;
   getVersion(name: string, version: string): Promise<PackageVersion | null>;
   getFiles(name: string, version: string): Promise<PackageFile[] | null>;
@@ -76,7 +88,12 @@ export interface RegistryRepository {
   updatePassword(accountId: string, passwordHash: string): Promise<void>;
   listTokens(accountId: string): Promise<TokenSummary[]>;
   saveToken(token: TokenRecord): Promise<void>;
-  authenticateToken(tokenHash: string): Promise<{ id: string; username?: string; role?: AccountRole; scopes: string[] } | null>;
+  authenticateToken(tokenHash: string): Promise<{
+    id: string;
+    username?: string;
+    role?: AccountRole;
+    scopes: string[];
+  } | null>;
   revokeToken(id: string, accountId: string): Promise<boolean>;
   publishArchive(archive: Buffer, actor: PublishActor): Promise<PublishArchiveResult>;
   getArchive(name: string, version: string): Promise<Buffer | null>;
