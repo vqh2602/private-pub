@@ -29,6 +29,7 @@ apps/
 packages/
   contracts/ Shared Zod schemas and TypeScript types
   database/  Prisma schema, migration extension, and seed
+  private_pub_cli/ Dart CLI for private dependency inspection and upgrades
   ui/        Shared UI primitives
   config/    Shared TypeScript configuration
 fixtures/    Valid and malformed package fixtures

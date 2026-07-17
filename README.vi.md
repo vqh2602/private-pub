@@ -29,6 +29,7 @@ apps/
 packages/
   contracts/ Schema Zod và kiểu TypeScript dùng chung
   database/  Prisma schema, phần mở rộng migration và seed
+  private_pub_cli/ Dart CLI kiểm tra, so sánh và nâng cấp dependency private
   ui/        Các UI primitive dùng chung
   config/    Cấu hình TypeScript dùng chung
 fixtures/    Fixture package hợp lệ và lỗi định dạng
@@ -187,6 +188,26 @@ Trang `http://localhost:3000/flutter` cung cấp trình tra cứu release Flutte
 Session đăng nhập được lưu ở cookie HttpOnly, `SameSite=Lax`, có thời hạn theo `SESSION_TTL_HOURS`. Đặt `COOKIE_SECURE=true` khi cả Web và API được phục vụ qua HTTPS. PAT được gắn với `account_id`; trang Tokens chỉ liệt kê và cho thu hồi token thuộc tài khoản hiện tại. Mật khẩu, session và PAT không được lưu dạng rõ trong PostgreSQL.
 
 ## Quy trình Dart CLI
+
+Repository có package CLI độc lập tại `packages/private_pub_cli`. Có thể chạy
+trực tiếp trong source bằng `dart run`, hoặc activate toàn cục để dùng lệnh
+`private_pub`:
+
+```bash
+cd packages/private_pub_cli
+dart pub global activate --source path .
+export PUB_HOSTED_URL=http://localhost:4000
+
+private_pub check
+private_pub versions aurora_ui
+private_pub compare aurora_ui 1.0.0 2.0.0
+private_pub outdated
+private_pub upgrade
+private_pub upgrade --major-versions --dry-run
+```
+
+CLI tự chọn `flutter pub` cho Flutter project và `dart pub` cho Dart project.
+Xem hướng dẫn đầy đủ trong `packages/private_pub_cli/README.md`.
 
 Đăng nhập Web, tạo PAT ở trang Tokens và copy giá trị đầy đủ ngay khi nó xuất hiện. Khi tạo token, có thể bật **Không hết hạn**; token đó chỉ mất hiệu lực khi bị thu hồi, tài khoản bị khóa/xóa, hoặc token pepper bị thay đổi. Sau đó thêm token vào Dart:
 
