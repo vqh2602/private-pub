@@ -1,4 +1,11 @@
-import type { PackageDetail, PackageFile, PackageSummary, PackageVersion, RegistryStats, Score } from "@private-pub/contracts";
+import type {
+  PackageDetail,
+  PackageFile,
+  PackageSummary,
+  PackageVersion,
+  RegistryStats,
+  Score,
+} from "@private-pub/contracts";
 
 export interface ImportJobRecord {
   id: string;
@@ -74,15 +81,39 @@ export interface RegistryRepository {
   getPackage(name: string): Promise<PackageDetail | null>;
   getVersion(name: string, version: string): Promise<PackageVersion | null>;
   getFiles(name: string, version: string): Promise<PackageFile[] | null>;
-  getFile(name: string, version: string, path: string): Promise<PackageFile | null>;
+  getFile(
+    name: string,
+    version: string,
+    path: string,
+  ): Promise<PackageFile | null>;
   getScore(name: string, version: string): Promise<Score | null>;
-  setRetraction(name: string, version: string, retracted: boolean): Promise<PackageVersion | null>;
-  setDiscontinued(name: string, discontinued: boolean): Promise<PackageSummary | null>;
-  createImport(input: Omit<ImportJobRecord, "id" | "status" | "createdAt">): Promise<ImportJobRecord>;
+  setRetraction(
+    name: string,
+    version: string,
+    retracted: boolean,
+  ): Promise<PackageVersion | null>;
+  setDiscontinued(
+    name: string,
+    discontinued: boolean,
+  ): Promise<PackageSummary | null>;
+  createImport(
+    input: Omit<ImportJobRecord, "id" | "status" | "createdAt">,
+  ): Promise<ImportJobRecord>;
   getImport(id: string): Promise<ImportJobRecord | null>;
   listImports(): Promise<ImportJobRecord[]>;
   findAccountByUsername(username: string): Promise<AccountRecord | null>;
-  createSession(accountId: string, tokenHash: string, expiresAt: string): Promise<void>;
+  listAccounts(): Promise<AccountRecord[]>;
+  createAccount(input: {
+    username: string;
+    passwordHash: string;
+    role: AccountRole;
+    mustChangePassword: boolean;
+  }): Promise<AccountRecord | null>;
+  createSession(
+    accountId: string,
+    tokenHash: string,
+    expiresAt: string,
+  ): Promise<void>;
   authenticateSession(tokenHash: string): Promise<AccountRecord | null>;
   revokeSession(tokenHash: string): Promise<void>;
   updatePassword(accountId: string, passwordHash: string): Promise<void>;
@@ -95,6 +126,9 @@ export interface RegistryRepository {
     scopes: string[];
   } | null>;
   revokeToken(id: string, accountId: string): Promise<boolean>;
-  publishArchive(archive: Buffer, actor: PublishActor): Promise<PublishArchiveResult>;
+  publishArchive(
+    archive: Buffer,
+    actor: PublishActor,
+  ): Promise<PublishArchiveResult>;
   getArchive(name: string, version: string): Promise<Buffer | null>;
 }

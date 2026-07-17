@@ -1,6 +1,12 @@
 import { z } from "zod";
 
-export const jobStatusSchema = z.enum(["queued", "running", "failed", "completed", "partial"]);
+export const jobStatusSchema = z.enum([
+  "queued",
+  "running",
+  "failed",
+  "completed",
+  "partial",
+]);
 export type JobStatus = z.infer<typeof jobStatusSchema>;
 
 export const packageFileSchema = z.object({
@@ -8,7 +14,9 @@ export const packageFileSchema = z.object({
   type: z.enum(["file", "dir"]),
   size: z.number().nonnegative().optional(),
   language: z.string().optional(),
-  preview: z.enum(["markdown", "structured", "image", "code", "unsupported"]).optional(),
+  preview: z
+    .enum(["markdown", "structured", "image", "code", "unsupported"])
+    .optional(),
   content: z.string().optional(),
 });
 export type PackageFile = z.infer<typeof packageFileSchema>;
@@ -32,7 +40,14 @@ export const scoreSchema = z.object({
 });
 export type Score = z.infer<typeof scoreSchema>;
 
-export const releaseChannelSchema = z.enum(["stable", "rc", "beta", "alpha", "dev", "prerelease"]);
+export const releaseChannelSchema = z.enum([
+  "stable",
+  "rc",
+  "beta",
+  "alpha",
+  "dev",
+  "prerelease",
+]);
 export type ReleaseChannel = z.infer<typeof releaseChannelSchema>;
 
 export const packageVersionSchema = z.object({
@@ -78,7 +93,11 @@ export const packageDetailSchema = z.object({
     z.object({
       name: z.string(),
       constraint: z.string(),
-      scope: z.enum(["dependencies", "dev_dependencies", "dependency_overrides"]),
+      scope: z.enum([
+        "dependencies",
+        "dev_dependencies",
+        "dependency_overrides",
+      ]),
       source: z.enum(["hosted", "sdk", "git", "path"]),
       registry: z.enum(["private", "pubdev", "sdk", "git", "path"]),
     }),
@@ -97,7 +116,40 @@ export const registryStatsSchema = z.object({
 });
 export type RegistryStats = z.infer<typeof registryStatsSchema>;
 
-const queryArray = <T extends z.ZodTypeAny>(item: T) => z.preprocess((value) => (value === undefined ? [] : Array.isArray(value) ? value : [value]), z.array(item));
+export const accountRoleSchema = z.enum(["super_admin", "admin", "user"]);
+export type AccountRole = z.infer<typeof accountRoleSchema>;
+
+export const accountSummarySchema = z.object({
+  id: z.string(),
+  username: z.string(),
+  role: accountRoleSchema,
+  mustChangePassword: z.boolean(),
+  isActive: z.boolean(),
+});
+export type AccountSummary = z.infer<typeof accountSummarySchema>;
+
+export const createAccountSchema = z.object({
+  username: z
+    .string()
+    .trim()
+    .toLowerCase()
+    .min(3)
+    .max(40)
+    .regex(
+      /^[a-z][a-z0-9._-]*$/,
+      "Username must start with a letter and contain only lowercase letters, numbers, dots, underscores, or hyphens.",
+    ),
+  password: z.string().min(10).max(200),
+  role: accountRoleSchema.default("user"),
+});
+export type CreateAccountRequest = z.infer<typeof createAccountSchema>;
+
+const queryArray = <T extends z.ZodTypeAny>(item: T) =>
+  z.preprocess(
+    (value) =>
+      value === undefined ? [] : Array.isArray(value) ? value : [value],
+    z.array(item),
+  );
 
 export const searchQuerySchema = z.object({
   q: z.string().trim().max(200).default(""),
@@ -108,7 +160,9 @@ export const searchQuerySchema = z.object({
   verifiedPublisher: z.coerce.boolean().optional(),
   minScore: z.coerce.number().int().min(0).max(160).optional(),
   includeRetracted: z.coerce.boolean().default(false),
-  sort: z.enum(["relevance", "updated", "downloads", "score"]).default("relevance"),
+  sort: z
+    .enum(["relevance", "updated", "downloads", "score"])
+    .default("relevance"),
   page: z.coerce.number().int().positive().default(1),
   limit: z.coerce.number().int().min(1).max(100).default(20),
 });
@@ -128,7 +182,17 @@ export type ImportRequest = z.infer<typeof importRequestSchema>;
 
 export const tokenRequestSchema = z.object({
   name: z.string().min(2).max(80),
-  scopes: z.array(z.enum(["packages:read", "packages:publish", "packages:admin", "imports:write", "tokens:write"])).min(1),
+  scopes: z
+    .array(
+      z.enum([
+        "packages:read",
+        "packages:publish",
+        "packages:admin",
+        "imports:write",
+        "tokens:write",
+      ]),
+    )
+    .min(1),
   expiresInDays: z.number().int().min(1).max(365).nullable().default(90),
 });
 export type TokenRequest = z.infer<typeof tokenRequestSchema>;

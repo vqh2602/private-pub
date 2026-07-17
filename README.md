@@ -12,6 +12,8 @@ The repository runs immediately in demo mode with deterministic data. PostgreSQL
 - Hosted Pub V2 package/version metadata, archive URL resolution, upload negotiation, upload adapter endpoint, and finalization endpoint.
 - Control-plane routes for search, packages, files, scores, imports, analyses, PATs, retract/restore, and discontinue/undiscontinue.
 - Database-backed accounts, HttpOnly login sessions, account-owned PATs, one-time PAT plaintext response, secret hashing with a server-side pepper, rate limits, CSP, and security headers.
+- Administrator-managed user creation, forced first-login password changes, and a self-service account page for changing passwords at any time.
+- Flutter SDK release explorer backed by Flutter's official Windows, macOS, and Linux release archives, with version, channel, Dart SDK, and commit search.
 - Archive index validator for traversal, duplicate paths, oversized files, and unsafe symlink targets.
 - Configurable worker pipeline with `pana`, `dart analyze`, `flutter analyze`, and `dartdoc` command steps plus a zero-SDK mock mode.
 - Prisma schema covering packages, versions, files, dependencies, analysis, scores, publishers, permissions, tokens, imports, search documents, and audit logs.
@@ -178,6 +180,10 @@ password: admin
 
 Mở `http://localhost:3000/login`, đăng nhập và đổi mật khẩu ngay. Tài khoản mặc định có cờ `must_change_password`, vì vậy API từ chối tạo/quản lý token và các thao tác ghi cho tới khi mật khẩu được đổi. Có thể thay thông tin bootstrap lần đầu bằng `DEFAULT_ADMIN_USERNAME` và `DEFAULT_ADMIN_PASSWORD`; các biến này không ghi đè tài khoản đã tồn tại.
 
+Quản trị viên tạo tài khoản mới tại `http://localhost:3000/admin`. Mật khẩu nhập ở đây là mật khẩu tạm thời; tài khoản mới luôn được gắn cờ bắt buộc đổi mật khẩu. Người dùng có thể đổi mật khẩu bất kỳ lúc nào tại `http://localhost:3000/account`. Chỉ `super_admin` được tạo thêm tài khoản `admin` hoặc `super_admin`; tài khoản `admin` thông thường chỉ được tạo vai trò `user`.
+
+Trang `http://localhost:3000/flutter` cung cấp trình tra cứu release Flutter theo tinh thần Sidekick. Dữ liệu được đọc từ kho release chính thức của Flutter và cache một giờ ở phía Next.js; có thể lọc theo Windows/macOS/Linux, stable/beta/dev, phiên bản Flutter, Dart SDK hoặc commit hash.
+
 Session đăng nhập được lưu ở cookie HttpOnly, `SameSite=Lax`, có thời hạn theo `SESSION_TTL_HOURS`. Đặt `COOKIE_SECURE=true` khi cả Web và API được phục vụ qua HTTPS. PAT được gắn với `account_id`; trang Tokens chỉ liệt kê và cho thu hồi token thuộc tài khoản hiện tại. Mật khẩu, session và PAT không được lưu dạng rõ trong PostgreSQL.
 
 ## Dart CLI flow
@@ -221,6 +227,8 @@ POST   /v1/auth/login
 GET    /v1/auth/me
 POST   /v1/auth/logout
 PATCH  /v1/auth/password
+GET    /v1/admin/accounts
+POST   /v1/admin/accounts
 GET    /v1/search
 GET    /v1/packages/:name
 GET    /v1/packages/:name/versions/:version

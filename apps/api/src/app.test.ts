@@ -16,12 +16,19 @@ function multipartArchive(archive: Buffer, filename = "package.tar.gz") {
   const boundary = `----private-pub-${Math.random().toString(16).slice(2)}`;
   return {
     boundary,
-    body: Buffer.concat([Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${filename}"\r\nContent-Type: application/gzip\r\n\r\n`), archive, Buffer.from(`\r\n--${boundary}--\r\n`)]),
+    body: Buffer.concat([
+      Buffer.from(
+        `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${filename}"\r\nContent-Type: application/gzip\r\n\r\n`,
+      ),
+      archive,
+      Buffer.from(`\r\n--${boundary}--\r\n`),
+    ]),
   };
 }
 
 function archiveWithVersion(archive: Buffer, from: string, to: string) {
-  if (from.length !== to.length) throw new Error("Fixture versions must have the same length.");
+  if (from.length !== to.length)
+    throw new Error("Fixture versions must have the same length.");
   const tarball = gunzipSync(archive);
   const marker = Buffer.from(`version: ${from}`);
   const offset = tarball.indexOf(marker);
@@ -45,7 +52,9 @@ describe("registry API", () => {
       url: "/api/packages/aurora_ui",
     });
     expect(response.statusCode).toBe(200);
-    expect(response.headers["content-type"]).toContain("application/vnd.pub.v2+json");
+    expect(response.headers["content-type"]).toContain(
+      "application/vnd.pub.v2+json",
+    );
     expect(response.json().versions[0].archive_url).toContain("2.3.1.tar.gz");
     expect(response.json().latest).toEqual(response.json().versions[0]);
     expect(response.json().latest.pubspec.dependencies.flutter).toEqual({
@@ -68,13 +77,54 @@ describe("registry API", () => {
       analyzedVersions: 9,
     });
   });
+  it("creates and lists user accounts without exposing password hashes", async () => {
+    const username = `developer_${Date.now()}`;
+    const created = await app.inject({
+      method: "POST",
+      url: "/v1/admin/accounts",
+      payload: { username, password: "temporary-password", role: "user" },
+    });
+    expect(created.statusCode).toBe(201);
+    expect(created.json().user).toEqual(
+      expect.objectContaining({
+        username,
+        role: "user",
+        mustChangePassword: true,
+      }),
+    );
+    expect(created.json().user.passwordHash).toBeUndefined();
+
+    const listed = await app.inject({
+      method: "GET",
+      url: "/v1/admin/accounts",
+    });
+    expect(listed.statusCode).toBe(200);
+    expect(listed.json().items).toContainEqual(
+      expect.objectContaining({ username }),
+    );
+    expect(
+      listed
+        .json()
+        .items.find((item: { username: string }) => item.username === username)
+        .passwordHash,
+    ).toBeUndefined();
+
+    const duplicate = await app.inject({
+      method: "POST",
+      url: "/v1/admin/accounts",
+      payload: { username, password: "temporary-password", role: "user" },
+    });
+    expect(duplicate.statusCode).toBe(409);
+  });
   it("combines SDK, platform, and quality filters", async () => {
     const response = await app.inject({
       method: "GET",
       url: "/v1/search?sdk=flutter&platform=web&hasPreview=true&minScore=150",
     });
     expect(response.statusCode).toBe(200);
-    expect(response.json().items.map((item: { name: string }) => item.name)).toEqual(["secure_storage_plus"]);
+    expect(
+      response.json().items.map((item: { name: string }) => item.name),
+    ).toEqual(["secure_storage_plus"]);
 
     const multipleSdk = await app.inject({
       method: "GET",
@@ -91,7 +141,9 @@ describe("registry API", () => {
     const detail = packageDetailSchema.parse(response.json());
     expect(detail.requirements.dartSdkMinimum).toBe("3.4.0");
     expect(detail.requirements.flutterMinimum).toBe("3.22.0");
-    expect(detail.dependencies).toContainEqual(expect.objectContaining({ name: "collection", constraint: "^1.19.0" }));
+    expect(detail.dependencies).toContainEqual(
+      expect.objectContaining({ name: "collection", constraint: "^1.19.0" }),
+    );
     expect(detail.latestVersion.releaseChannel).toBe("stable");
     expect(detail.versions).toContainEqual(
       expect.objectContaining({
@@ -109,7 +161,12 @@ describe("registry API", () => {
   it("imports a .tar.gz file, creates its package, and adds a new version", async () => {
     const isolated = await buildApp();
     try {
-      const firstArchive = readFileSync(new URL("../../../fixtures/archives/sample_package-1.0.0.tar.gz", import.meta.url));
+      const firstArchive = readFileSync(
+        new URL(
+          "../../../fixtures/archives/sample_package-1.0.0.tar.gz",
+          import.meta.url,
+        ),
+      );
       const firstUpload = multipartArchive(firstArchive);
       const created = await isolated.inject({
         method: "POST",
@@ -135,7 +192,9 @@ describe("registry API", () => {
       expect(scored.json().grantedPoints).toBeGreaterThan(0);
       expect(scored.json().breakdown).toHaveLength(5);
 
-      const secondUpload = multipartArchive(archiveWithVersion(firstArchive, "1.0.0", "1.1.0"));
+      const secondUpload = multipartArchive(
+        archiveWithVersion(firstArchive, "1.0.0", "1.1.0"),
+      );
       const versionAdded = await isolated.inject({
         method: "POST",
         url: "/v1/imports/file",
@@ -178,14 +237,30 @@ describe("registry API", () => {
       },
     });
     expect(negotiation.statusCode).toBe(200);
-    expect(negotiation.headers["content-type"]).toContain("application/vnd.pub.v2+json");
+    expect(negotiation.headers["content-type"]).toContain(
+      "application/vnd.pub.v2+json",
+    );
     const { url, fields } = negotiation.json<{
       url: string;
       fields: { uploadId: string };
     }>();
     const boundary = "----private-pub-contract-test";
-    const archive = readFileSync(new URL("../../../fixtures/archives/sample_package-1.0.0.tar.gz", import.meta.url));
-    const multipartBody = Buffer.concat([Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="uploadId"\r\n\r\n${fields.uploadId}\r\n`), Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="package.tar.gz"\r\nContent-Type: application/octet-stream\r\n\r\n`), archive, Buffer.from(`\r\n--${boundary}--\r\n`)]);
+    const archive = readFileSync(
+      new URL(
+        "../../../fixtures/archives/sample_package-1.0.0.tar.gz",
+        import.meta.url,
+      ),
+    );
+    const multipartBody = Buffer.concat([
+      Buffer.from(
+        `--${boundary}\r\nContent-Disposition: form-data; name="uploadId"\r\n\r\n${fields.uploadId}\r\n`,
+      ),
+      Buffer.from(
+        `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="package.tar.gz"\r\nContent-Type: application/octet-stream\r\n\r\n`,
+      ),
+      archive,
+      Buffer.from(`\r\n--${boundary}--\r\n`),
+    ]);
     const upload = await app.inject({
       method: "POST",
       url: new URL(url).pathname,
@@ -196,17 +271,23 @@ describe("registry API", () => {
       payload: multipartBody,
     });
     expect(upload.statusCode).toBe(204);
-    expect(upload.headers.location).toContain("/api/packages/versions/newUploadFinish?uploadId=");
+    expect(upload.headers.location).toContain(
+      "/api/packages/versions/newUploadFinish?uploadId=",
+    );
     const finalize = await app.inject({
       method: "GET",
-      url: new URL(upload.headers.location!).pathname + new URL(upload.headers.location!).search,
+      url:
+        new URL(upload.headers.location!).pathname +
+        new URL(upload.headers.location!).search,
       headers: {
         authorization: "Bearer demo-admin-token",
         accept: "application/vnd.pub.v2+json",
       },
     });
     expect(finalize.statusCode).toBe(200);
-    expect(finalize.json().success.message).toContain("Published sample_package 1.0.0 successfully");
+    expect(finalize.json().success.message).toContain(
+      "Published sample_package 1.0.0 successfully",
+    );
     const published = await app.inject({
       method: "GET",
       url: "/api/packages/sample_package",
@@ -214,7 +295,9 @@ describe("registry API", () => {
     expect(published.statusCode).toBe(200);
     expect(published.json().latest.version).toBe("1.0.0");
     expect(published.json().latest).toEqual(published.json().versions[0]);
-    expect(published.json().latest.pubspec.environment.sdk).toBe(">=3.4.0 <4.0.0");
+    expect(published.json().latest.pubspec.environment.sdk).toBe(
+      ">=3.4.0 <4.0.0",
+    );
     const mine = await app.inject({
       method: "GET",
       url: "/v1/packages/mine",
@@ -224,7 +307,9 @@ describe("registry API", () => {
     expect(mine.json().items).toContainEqual(
       expect.objectContaining({
         package: expect.objectContaining({ name: "sample_package" }),
-        versions: expect.arrayContaining([expect.objectContaining({ version: "1.0.0", publishedBy: "admin" })]),
+        versions: expect.arrayContaining([
+          expect.objectContaining({ version: "1.0.0", publishedBy: "admin" }),
+        ]),
       }),
     );
     const downloaded = await app.inject({
@@ -237,15 +322,28 @@ describe("registry API", () => {
   it("records the account that published each version of the same package", async () => {
     const repository = new DemoRegistryRepository();
     await repository.initialize();
-    const firstArchive = readFileSync(new URL("../../../fixtures/archives/sample_package-1.0.0.tar.gz", import.meta.url));
+    const firstArchive = readFileSync(
+      new URL(
+        "../../../fixtures/archives/sample_package-1.0.0.tar.gz",
+        import.meta.url,
+      ),
+    );
     await repository.publishArchive(firstArchive, {
       id: "account-alice",
       username: "alice",
     });
-    await repository.publishArchive(archiveWithVersion(firstArchive, "1.0.0", "1.1.0"), { id: "account-bob", username: "bob" });
+    await repository.publishArchive(
+      archiveWithVersion(firstArchive, "1.0.0", "1.1.0"),
+      { id: "account-bob", username: "bob" },
+    );
 
     const detail = await repository.getPackage("sample_package");
-    expect(detail?.versions).toEqual(expect.arrayContaining([expect.objectContaining({ version: "1.0.0", publishedBy: "alice" }), expect.objectContaining({ version: "1.1.0", publishedBy: "bob" })]));
+    expect(detail?.versions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ version: "1.0.0", publishedBy: "alice" }),
+        expect.objectContaining({ version: "1.1.0", publishedBy: "bob" }),
+      ]),
+    );
     expect(detail?.latestVersion.publishedBy).toBe("bob");
   });
   it("uses the forwarded HTTPS origin behind Cloudflare or another trusted proxy", async () => {
@@ -260,12 +358,19 @@ describe("registry API", () => {
       },
     });
     expect(response.statusCode).toBe(200);
-    expect(response.json().url).toMatch(/^https:\/\/registry\.example\.internal\/api\/uploads\//);
+    expect(response.json().url).toMatch(
+      /^https:\/\/registry\.example\.internal\/api\/uploads\//,
+    );
   });
   it("restores published archives after a repository restart", async () => {
     const directory = await mkdtemp(join(tmpdir(), "private-pub-registry-"));
     try {
-      const archive = readFileSync(new URL("../../../fixtures/archives/sample_package-1.0.0.tar.gz", import.meta.url));
+      const archive = readFileSync(
+        new URL(
+          "../../../fixtures/archives/sample_package-1.0.0.tar.gz",
+          import.meta.url,
+        ),
+      );
       const first = new DemoRegistryRepository(directory);
       await first.initialize();
       await first.publishArchive(archive, {
@@ -274,8 +379,14 @@ describe("registry API", () => {
       });
       const restarted = new DemoRegistryRepository(directory);
       await restarted.initialize();
-      expect((await restarted.getPackage("sample_package"))?.latestVersion.version).toBe("1.0.0");
-      expect((await restarted.getArchive("sample_package", "1.0.0"))?.equals(archive)).toBe(true);
+      expect(
+        (await restarted.getPackage("sample_package"))?.latestVersion.version,
+      ).toBe("1.0.0");
+      expect(
+        (await restarted.getArchive("sample_package", "1.0.0"))?.equals(
+          archive,
+        ),
+      ).toBe(true);
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
@@ -325,8 +436,12 @@ describe("archive validation", () => {
       },
     ]);
     expect(largeGeneratedFile.valid).toBe(true);
-    const oversizedArchive = validateArchiveIndex([{ path: "assets/huge.bin", size: 257 * 1024 * 1024, type: "file" }]);
-    expect(oversizedArchive.errors).toContain("Archive exceeds uncompressed size limit");
+    const oversizedArchive = validateArchiveIndex([
+      { path: "assets/huge.bin", size: 257 * 1024 * 1024, type: "file" },
+    ]);
+    expect(oversizedArchive.errors).toContain(
+      "Archive exceeds uncompressed size limit",
+    );
   });
 });
 
@@ -347,9 +462,15 @@ describe("personal access tokens", () => {
     process.env.TOKEN_PEPPER = "test-pepper";
     try {
       const repository = new DemoRegistryRepository();
-      const created = await issueToken(repository, { name: "long-lived", scopes: ["packages:read"], expiresInDays: null }, "account-1");
+      const created = await issueToken(
+        repository,
+        { name: "long-lived", scopes: ["packages:read"], expiresInDays: null },
+        "account-1",
+      );
       expect(created.expiresAt).toBeNull();
-      await expect(repository.authenticateToken(hashToken(created.token, "test-pepper"))).resolves.toEqual({
+      await expect(
+        repository.authenticateToken(hashToken(created.token, "test-pepper")),
+      ).resolves.toEqual({
         id: "account-1",
         username: undefined,
         role: undefined,
