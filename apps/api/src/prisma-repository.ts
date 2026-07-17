@@ -58,7 +58,10 @@ export class PrismaRegistryRepository implements RegistryRepository {
   private readonly prisma = new PrismaClient();
   private readonly storageDirectory: string;
 
-  constructor(storageDirectory: string) {
+  constructor(
+    storageDirectory: string,
+    private readonly publisherId = "platform.internal",
+  ) {
     this.storageDirectory = resolve(storageDirectory);
   }
 
@@ -586,11 +589,11 @@ export class PrismaRegistryRepository implements RegistryRepository {
     const calculatedScore = scoreParsedPackage(parsed);
     await this.prisma.$transaction(async (transaction) => {
       const publisher = await transaction.publisher.upsert({
-        where: { publisherId: "local.private" },
+        where: { publisherId: this.publisherId },
         update: {},
         create: {
-          publisherId: "local.private",
-          displayName: "Local private registry",
+          publisherId: this.publisherId,
+          displayName: this.publisherId,
         },
       });
       const packageRecord = await transaction.package.upsert({

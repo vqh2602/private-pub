@@ -32,9 +32,10 @@ export async function buildApp() {
     return reply.code(statusCode).send({ error: statusCode === 500 ? "internal_error" : normalized.name, message: normalized.message });
   });
   const storageDirectory = process.env.ARCHIVE_STORAGE_DIR ?? process.env.DEMO_STORAGE_DIR ?? ".private-pub-data/archives";
+  const publisherId = process.env.PUBLISHER_ID?.trim() || "platform.internal";
   const repository = process.env.DEMO_MODE === "false" && process.env.NODE_ENV !== "test"
-    ? new PrismaRegistryRepository(storageDirectory)
-    : new DemoRegistryRepository(process.env.NODE_ENV === "test" ? undefined : storageDirectory);
+    ? new PrismaRegistryRepository(storageDirectory, publisherId)
+    : new DemoRegistryRepository(process.env.NODE_ENV === "test" ? undefined : storageDirectory, publisherId);
   await repository.initialize();
   app.addHook("onClose", async () => repository.close?.());
   await registerRoutes(app, repository);

@@ -27,7 +27,10 @@ export class DemoRegistryRepository implements RegistryRepository {
     { accountId: string; expiresAt: string }
   >();
 
-  constructor(private readonly storageDirectory?: string) {}
+  constructor(
+    private readonly storageDirectory?: string,
+    private readonly publisherId = "platform.internal",
+  ) {}
 
   async initialize() {
     if (!this.storageDirectory) return;
@@ -400,7 +403,7 @@ export class DemoRegistryRepository implements RegistryRepository {
       this.details.set(parsed.name, {
         package: {
           name: parsed.name,
-          publisherId: "local.private",
+          publisherId: this.publisherId,
           description: parsed.description,
           latestVersion: parsed.version,
           isDiscontinued: false,

@@ -162,6 +162,8 @@ docker compose down --volumes
 
 Đặt `DEMO_MODE=false` để API sử dụng `PrismaRegistryRepository`. Metadata package, phiên bản, dependency, chỉ mục tệp, điểm số, import, API token, trạng thái thu hồi và trạng thái ngừng phát hành khi đó được đọc từ và ghi vào PostgreSQL. Archive nhị phân và text preview vẫn nằm ở `ARCHIVE_STORAGE_DIR`; adapter S3 vẫn là bước tăng cường riêng cho production.
 
+Đặt `PUBLISHER_ID=platform.internal` để publisher của package publish mới là `platform.internal`. Biến này cho phép thay publisher theo môi trường mà không cần sửa mã nguồn.
+
 API và Web đều nạp `.env` ở thư mục gốc monorepo trong quá trình phát triển cục bộ. Sau khi thay `DEMO_MODE`, khởi động lại cả hai tiến trình và xác minh repository đang hoạt động:
 
 ```bash

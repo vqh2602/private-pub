@@ -162,6 +162,8 @@ docker compose down --volumes
 
 Set `DEMO_MODE=false` to make the API use `PrismaRegistryRepository`. Package metadata, versions, dependencies, file indexes, scores, imports, API tokens, retractions, and discontinue state are then read from and written to PostgreSQL. Archive binaries and text previews remain in `ARCHIVE_STORAGE_DIR`; the S3 adapter is still a separate production-hardening step.
 
+Set `PUBLISHER_ID=platform.internal` to assign newly published packages to `platform.internal`. This allows each environment to select its publisher without changing source code.
+
 The API and Web both load the monorepo root `.env` during local development. After changing `DEMO_MODE`, restart both processes and verify the active repository:
 
 ```bash
