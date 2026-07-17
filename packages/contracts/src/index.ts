@@ -54,6 +54,19 @@ export const packageDetailSchema = z.object({
   package: packageSummarySchema,
   latestVersion: packageVersionSchema,
   versions: z.array(packageVersionSchema),
+  requirements: z.object({
+    dartSdkConstraint: z.string(),
+    dartSdkMinimum: z.string(),
+    flutterConstraint: z.string().nullable(),
+    flutterMinimum: z.string().nullable()
+  }),
+  dependencies: z.array(z.object({
+    name: z.string(),
+    constraint: z.string(),
+    scope: z.enum(["dependencies", "dev_dependencies", "dependency_overrides"]),
+    source: z.enum(["hosted", "sdk", "git", "path"]),
+    registry: z.enum(["private", "pubdev", "sdk", "git", "path"])
+  })),
   score: scoreSchema,
   readme: z.string(),
   changelog: z.string(),

@@ -57,6 +57,23 @@ for (const item of summaries) {
     package: item,
     latestVersion: versions[0]!,
     versions,
+    requirements: {
+      dartSdkConstraint: ">=3.4.0 <4.0.0",
+      dartSdkMinimum: "3.4.0",
+      flutterConstraint: item.topics.includes("flutter") ? ">=3.22.0" : null,
+      flutterMinimum: item.topics.includes("flutter") ? "3.22.0" : null
+    },
+    dependencies: item.name === "aurora_ui" ? [
+      { name: "flutter", constraint: "SDK", scope: "dependencies", source: "sdk", registry: "sdk" },
+      { name: "analytics_bridge", constraint: "^4.1.2", scope: "dependencies", source: "hosted", registry: "private" },
+      { name: "collection", constraint: "^1.19.0", scope: "dependencies", source: "hosted", registry: "pubdev" },
+      { name: "equatable", constraint: "^2.0.7", scope: "dependencies", source: "hosted", registry: "pubdev" },
+      { name: "meta", constraint: "^1.16.0", scope: "dependencies", source: "hosted", registry: "pubdev" },
+      { name: "flutter_test", constraint: "SDK", scope: "dev_dependencies", source: "sdk", registry: "sdk" },
+      { name: "flutter_lints", constraint: "^5.0.0", scope: "dev_dependencies", source: "hosted", registry: "pubdev" }
+    ] : [
+      { name: item.topics.includes("flutter") ? "flutter" : "meta", constraint: item.topics.includes("flutter") ? "SDK" : "^1.16.0", scope: "dependencies", source: item.topics.includes("flutter") ? "sdk" : "hosted", registry: item.topics.includes("flutter") ? "sdk" : "pubdev" }
+    ],
     score: { ...score, grantedPoints: item.score },
     readme: item.name === "aurora_ui" ? files[0]!.content! : `# ${item.name}\n\n${item.description}`,
     changelog: item.name === "aurora_ui" ? files[1]!.content! : `# Changelog\n\n## ${item.latestVersion}\n\nInitial internal release.`,

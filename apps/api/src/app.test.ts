@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { FastifyInstance } from "fastify";
 import { buildApp } from "./app.js";
 import { validateArchiveIndex } from "./archive.js";
+import { packageDetailSchema } from "@private-pub/contracts";
 
 describe("registry API", () => {
   let app: FastifyInstance;
@@ -16,6 +17,13 @@ describe("registry API", () => {
   it("ranks exact names first", async () => {
     const response = await app.inject({ method: "GET", url: "/v1/search?q=aurora_ui" });
     expect(response.json().items[0].name).toBe("aurora_ui");
+  });
+  it("returns SDK requirements and direct dependencies", async () => {
+    const response = await app.inject({ method: "GET", url: "/v1/packages/aurora_ui" });
+    const detail = packageDetailSchema.parse(response.json());
+    expect(detail.requirements.dartSdkMinimum).toBe("3.4.0");
+    expect(detail.requirements.flutterMinimum).toBe("3.22.0");
+    expect(detail.dependencies).toContainEqual(expect.objectContaining({ name: "collection", constraint: "^1.19.0" }));
   });
   it("supports retract and restore", async () => {
     const retracted = await app.inject({ method: "POST", url: "/v1/packages/aurora_ui/versions/2.3.1/retract" });

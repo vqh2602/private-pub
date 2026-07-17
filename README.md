@@ -6,7 +6,7 @@ The repository runs immediately in demo mode with deterministic data. PostgreSQL
 
 ## What is implemented
 
-- Modern Next.js UI with package search, filters, package details, versions, score breakdown, publishers, import wizard, token management, and administration.
+- Modern Next.js UI with package search, filters, package details, minimum Dart/Flutter requirements, dependency constraints, versions, score breakdown, publishers, import wizard, token management, and administration.
 - Historical file explorer with file tree, Markdown preview, structured pubspec preview, source viewer, raw view, simple version diff, and graceful binary fallback.
 - Fastify API with separate `/api/packages/...` and `/v1/...` surfaces.
 - Hosted Pub V2 package/version metadata, archive URL resolution, upload negotiation, upload adapter endpoint, and finalization endpoint.
