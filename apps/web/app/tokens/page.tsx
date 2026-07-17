@@ -21,7 +21,7 @@ export default function TokensPage() {
   const [created, setCreated] = useState<CreatedToken | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [currentPassword, setCurrentPassword] = useState("admin");
+  const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
 
   const load = useCallback(async () => {
