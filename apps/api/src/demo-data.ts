@@ -1,4 +1,5 @@
 import type { PackageDetail, PackageFile, PackageSummary, PackageVersion, Score } from "@private-pub/contracts";
+import { releaseChannel } from "./release-channel.js";
 
 const now = "2026-07-16T08:30:00.000Z";
 
@@ -30,11 +31,13 @@ const version = (value: string, daysAgo: number, prerelease = false, sourceType:
     dependencies: { flutter: { sdk: "flutter" }, collection: "^1.19.0" }
   },
   publishedAt: new Date(Date.parse(now) - daysAgo * 86_400_000).toISOString(),
+  publishedBy: "platform-team",
   sdk: { dart: ">=3.4.0 <4.0.0", flutter: ">=3.22.0" },
   platforms: ["android", "ios", "web", "linux", "macos", "windows"],
   archiveSha256: `0a4cc3d8f1${value.replace(/\D/g, "").padEnd(54, "e")}`.slice(0, 64),
   retractedAt: null,
   prerelease,
+  releaseChannel: releaseChannel(value),
   sourceType
 });
 
@@ -60,7 +63,7 @@ const summaries: PackageSummary[] = [
 export const demoDetails = new Map<string, PackageDetail>();
 for (const item of summaries) {
   const versions = item.name === "aurora_ui"
-    ? [version("2.3.1", 0), version("2.3.0", 17), version("2.2.0", 51), version("2.4.0-beta.1", 4, true)]
+    ? [version("2.3.1", 0), version("2.3.0", 17), version("2.2.0", 51), version("2.4.0-rc.1", 2, true), version("2.4.0-beta.1", 4, true), version("2.4.0-dev.2", 6, true)]
     : [version(item.latestVersion, 8, false, item.name === "analytics_bridge" ? "pubdev_import" : "native")];
   demoDetails.set(item.name, {
     package: item,

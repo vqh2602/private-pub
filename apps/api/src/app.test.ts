@@ -57,6 +57,9 @@ describe("registry API", () => {
     expect(detail.requirements.dartSdkMinimum).toBe("3.4.0");
     expect(detail.requirements.flutterMinimum).toBe("3.22.0");
     expect(detail.dependencies).toContainEqual(expect.objectContaining({ name: "collection", constraint: "^1.19.0" }));
+    expect(detail.latestVersion.releaseChannel).toBe("stable");
+    expect(detail.versions).toContainEqual(expect.objectContaining({ version: "2.4.0-beta.1", releaseChannel: "beta" }));
+    expect(detail.versions).toContainEqual(expect.objectContaining({ version: "2.4.0-dev.2", releaseChannel: "dev" }));
   });
   it("imports a .tar.gz file, creates its package, and adds a new version", async () => {
     const isolated = await buildApp();
@@ -71,6 +74,10 @@ describe("registry API", () => {
       });
       expect(created.statusCode).toBe(201);
       expect(created.json()).toEqual(expect.objectContaining({ packageName: "sample_package", version: "1.0.0", action: "package_created" }));
+      const scored = await isolated.inject({ method: "GET", url: "/v1/packages/sample_package/versions/1.0.0/score" });
+      expect(scored.statusCode).toBe(200);
+      expect(scored.json().grantedPoints).toBeGreaterThan(0);
+      expect(scored.json().breakdown).toHaveLength(5);
 
       const secondUpload = multipartArchive(archiveWithVersion(firstArchive, "1.0.0", "1.1.0"));
       const versionAdded = await isolated.inject({
@@ -136,6 +143,20 @@ describe("registry API", () => {
     expect(downloaded.statusCode).toBe(200);
     expect(downloaded.rawPayload.equals(archive)).toBe(true);
   });
+  it("records the account that published each version of the same package", async () => {
+    const repository = new DemoRegistryRepository();
+    await repository.initialize();
+    const firstArchive = readFileSync(new URL("../../../fixtures/archives/sample_package-1.0.0.tar.gz", import.meta.url));
+    await repository.publishArchive(firstArchive, { id: "account-alice", username: "alice" });
+    await repository.publishArchive(archiveWithVersion(firstArchive, "1.0.0", "1.1.0"), { id: "account-bob", username: "bob" });
+
+    const detail = await repository.getPackage("sample_package");
+    expect(detail?.versions).toEqual(expect.arrayContaining([
+      expect.objectContaining({ version: "1.0.0", publishedBy: "alice" }),
+      expect.objectContaining({ version: "1.1.0", publishedBy: "bob" })
+    ]));
+    expect(detail?.latestVersion.publishedBy).toBe("bob");
+  });
   it("uses the forwarded HTTPS origin behind Cloudflare or another trusted proxy", async () => {
     const response = await app.inject({
       method: "GET",
@@ -156,7 +177,7 @@ describe("registry API", () => {
       const archive = readFileSync(new URL("../../../fixtures/archives/sample_package-1.0.0.tar.gz", import.meta.url));
       const first = new DemoRegistryRepository(directory);
       await first.initialize();
-      await first.publishArchive(archive);
+      await first.publishArchive(archive, { id: "account-1", username: "alice" });
       const restarted = new DemoRegistryRepository(directory);
       await restarted.initialize();
       expect((await restarted.getPackage("sample_package"))?.latestVersion.version).toBe("1.0.0");
@@ -209,7 +230,7 @@ describe("personal access tokens", () => {
       const repository = new DemoRegistryRepository();
       const created = await issueToken(repository, { name: "long-lived", scopes: ["packages:read"], expiresInDays: null }, "account-1");
       expect(created.expiresAt).toBeNull();
-      await expect(repository.authenticateToken(hashToken(created.token, "test-pepper"))).resolves.toEqual({ id: created.id, scopes: ["packages:read"] });
+      await expect(repository.authenticateToken(hashToken(created.token, "test-pepper"))).resolves.toEqual({ id: "account-1", username: undefined, role: undefined, scopes: ["packages:read"] });
     } finally {
       if (previousPepper === undefined) delete process.env.TOKEN_PEPPER;
       else process.env.TOKEN_PEPPER = previousPepper;

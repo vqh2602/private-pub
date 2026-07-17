@@ -32,7 +32,7 @@ export function requireScopes(repository: RegistryRepository, ...required: Scope
     const plaintext = header.slice("Bearer ".length);
     const token = await repository.authenticateToken(hashSecret(plaintext));
     if (!token) return reply.code(401).send({ error: "unauthorized", message: "The bearer token is invalid, expired, or revoked." });
-    request.actor = { id: token.id, authType: "token", scopes: token.scopes.filter(isScope) };
+    request.actor = { id: token.id, username: token.username, role: token.role, authType: "token", scopes: token.scopes.filter(isScope) };
     if (!required.every((scope) => request.actor?.scopes.includes(scope))) return reply.code(403).send({ error: "forbidden", requiredScopes: required });
   };
 }

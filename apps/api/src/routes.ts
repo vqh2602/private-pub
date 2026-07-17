@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { importRequestSchema, searchQuerySchema, tokenRequestSchema } from "@private-pub/contracts";
 import { z } from "zod";
 import type { PackageVersion } from "@private-pub/contracts";
-import type { RegistryRepository } from "./domain.js";
+import type { PublishActor, RegistryRepository } from "./domain.js";
 import { hashSecret, issueToken, newSession, requireScopes, sessionCookieName } from "./security.js";
 import { hashPassword, verifyPassword } from "./password.js";
 
@@ -29,7 +29,7 @@ function hostedVersion(request: FastifyRequest, name: string, item: PackageVersi
 }
 
 export async function registerRoutes(app: FastifyInstance, repository: RegistryRepository) {
-  const pendingUploads = new Map<string, { archive?: Buffer; filename?: string; uploadedAt?: string }>();
+  const pendingUploads = new Map<string, { actor: PublishActor; archive?: Buffer; filename?: string; uploadedAt?: string }>();
   const scopes = (...required: Parameters<typeof requireScopes>[1][]) => requireScopes(repository, ...required);
   app.get("/health", async () => ({ status: "ok", mode: repository.mode, timestamp: new Date().toISOString() }));
 
@@ -89,7 +89,7 @@ export async function registerRoutes(app: FastifyInstance, repository: RegistryR
 
   const startUpload = async (request: FastifyRequest, reply: FastifyReply) => {
     const uploadId = randomUUID();
-    pendingUploads.set(uploadId, {});
+    pendingUploads.set(uploadId, { actor: { id: request.actor!.id, username: request.actor!.username } });
     return reply.type(hostedContentType).send({
       url: `${request.protocol}://${request.host}/api/uploads/${uploadId}`,
       fields: { uploadId }
@@ -103,6 +103,7 @@ export async function registerRoutes(app: FastifyInstance, repository: RegistryR
     const { uploadId } = request.params as { uploadId: string };
     const pending = pendingUploads.get(uploadId);
     if (!pending) return reply.code(404).type(hostedContentType).send({ error: { code: "upload_not_found", message: "The upload session is missing or expired." } });
+    if (pending.actor.id !== request.actor!.id) return reply.code(403).type(hostedContentType).send({ error: { code: "upload_owner_mismatch", message: "This upload session belongs to another account." } });
     const file = await request.file();
     if (!file) return reply.code(400).type(hostedContentType).send({ error: { code: "archive_missing", message: "Expected multipart field 'file' containing a .tar.gz archive." } });
     pending.archive = await file.toBuffer();
@@ -116,8 +117,9 @@ export async function registerRoutes(app: FastifyInstance, repository: RegistryR
     const uploadId = String((request.query as { uploadId?: string }).uploadId ?? "");
     const pending = pendingUploads.get(uploadId);
     if (!pending?.archive) return reply.code(400).type(hostedContentType).send({ error: { code: "upload_incomplete", message: "No uploaded archive was found for this publish session." } });
+    if (pending.actor.id !== request.actor!.id) return reply.code(403).type(hostedContentType).send({ error: { code: "upload_owner_mismatch", message: "This upload session belongs to another account." } });
     try {
-      const published = await repository.publishArchive(pending.archive);
+      const published = await repository.publishArchive(pending.archive, pending.actor);
       pendingUploads.delete(uploadId);
       return reply.type(hostedContentType).send({ success: { message: `Published ${published.name} ${published.version} successfully; analysis has been queued.` } });
     } catch (error) {
@@ -170,7 +172,7 @@ export async function registerRoutes(app: FastifyInstance, repository: RegistryR
       return reply.code(400).send({ error: "invalid_file_type", message: "File import phải có định dạng .tar.gz." });
     }
     try {
-      const published = await repository.publishArchive(await file.toBuffer());
+      const published = await repository.publishArchive(await file.toBuffer(), { id: request.actor!.id, username: request.actor!.username });
       const action = published.packageCreated ? "package_created" : "version_added";
       return reply.code(201).send({
         packageName: published.name,

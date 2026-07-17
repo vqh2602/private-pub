@@ -20,19 +20,30 @@ export const scoreSchema = z.object({
   popularityScore: z.number().min(0).max(1),
   maintenanceScore: z.number().min(0).max(1),
   tags: z.array(z.string()),
-  breakdown: z.array(z.object({ label: z.string(), points: z.number(), max: z.number(), status: z.enum(["pass", "warn", "fail"]) }))
+  breakdown: z.array(z.object({
+    label: z.string(),
+    points: z.number(),
+    max: z.number(),
+    status: z.enum(["pass", "warn", "fail"]),
+    details: z.array(z.string()).optional()
+  }))
 });
 export type Score = z.infer<typeof scoreSchema>;
+
+export const releaseChannelSchema = z.enum(["stable", "rc", "beta", "alpha", "dev", "prerelease"]);
+export type ReleaseChannel = z.infer<typeof releaseChannelSchema>;
 
 export const packageVersionSchema = z.object({
   version: z.string(),
   pubspec: z.record(z.string(), z.unknown()),
   publishedAt: z.string().datetime(),
+  publishedBy: z.string().nullable(),
   sdk: z.object({ dart: z.string(), flutter: z.string().optional() }),
   platforms: z.array(z.string()),
   archiveSha256: z.string(),
   retractedAt: z.string().datetime().nullable(),
   prerelease: z.boolean(),
+  releaseChannel: releaseChannelSchema,
   sourceType: z.enum(["native", "pubdev_import"])
 });
 export type PackageVersion = z.infer<typeof packageVersionSchema>;

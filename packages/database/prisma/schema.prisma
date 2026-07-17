@@ -121,6 +121,7 @@ model PackageVersion {
   archiveObjectKey     String            @map("archive_object_key")
   archiveSha256        String            @map("archive_sha256")
   publishedAt          DateTime          @map("published_at")
+  publishedBy          String?           @map("published_by")
   retractedAt          DateTime?         @map("retracted_at")
   isPrerelease         Boolean           @default(false) @map("is_prerelease")
   sourceType           String            @default("native") @map("source_type")

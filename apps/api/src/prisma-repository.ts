@@ -15,8 +15,10 @@ import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import semver from "semver";
 import { parsePackageArchive, type ParsedPackageArchive } from "./archive.js";
-import type { AccountRecord, ImportJobRecord, RegistryRepository, TokenRecord } from "./domain.js";
+import type { AccountRecord, ImportJobRecord, PublishActor, RegistryRepository, TokenRecord } from "./domain.js";
 import { hashPassword } from "./password.js";
+import { calculatePackageScore, SCORE_WEIGHTS, scoreParsedPackage } from "./scoring.js";
+import { releaseChannel, selectLatestRelease } from "./release-channel.js";
 
 type DatabasePackage = Prisma.PackageGetPayload<{
   include: {
@@ -55,6 +57,7 @@ export class PrismaRegistryRepository implements RegistryRepository {
       await this.prisma.account.create({ data: { username, passwordHash: await hashPassword(password), role: DatabaseAccountRole.SUPER_ADMIN, mustChangePassword: true } });
       console.warn(`[security] Created initial super-admin account '${username}'. Change its default password immediately.`);
     }
+    await this.backfillEmptyScores();
   }
 
   async close() {
@@ -228,7 +231,7 @@ export class PrismaRegistryRepository implements RegistryRepository {
     const item = await this.prisma.apiToken.findUnique({ where: { tokenHash }, include: { account: true } });
     if (!item?.account?.isActive || item.revokedAt || (item.expiresAt && item.expiresAt <= new Date())) return null;
     await this.prisma.apiToken.update({ where: { id: item.id }, data: { lastUsedAt: new Date() } });
-    return { id: item.subjectId, scopes: stringArray(item.scopesJson) };
+    return { id: item.account.id, username: item.account.username, role: mapAccount(item.account).role, scopes: stringArray(item.scopesJson) };
   }
 
   async revokeToken(id: string, accountId: string) {
@@ -236,7 +239,7 @@ export class PrismaRegistryRepository implements RegistryRepository {
     return result.count > 0;
   }
 
-  async publishArchive(archive: Buffer) {
+  async publishArchive(archive: Buffer, actor: PublishActor) {
     const parsed = await parsePackageArchive(archive);
     const existingPackage = await this.prisma.package.findUnique({ where: { name: parsed.name }, select: { id: true } });
     const duplicate = await this.prisma.packageVersion.findFirst({ where: { package: { name: parsed.name }, version: parsed.version }, select: { id: true } });
@@ -267,7 +270,7 @@ export class PrismaRegistryRepository implements RegistryRepository {
     }));
 
     try {
-      await this.persistPackage(parsed, archivePath, files);
+      await this.persistPackage(parsed, archivePath, files, actor);
     } catch (error) {
       await rm(archivePath, { force: true });
       await rm(previewDirectory, { recursive: true, force: true });
@@ -284,10 +287,11 @@ export class PrismaRegistryRepository implements RegistryRepository {
 
   private async persistPackage(parsed: ParsedPackageArchive, archivePath: string, files: Array<{
     path: string; kind: string; sizeBytes: bigint; mimeType: null; sha256: string; storageKey: string; isText: boolean; language?: string; previewStatus: PreviewStatus; sortOrder: number;
-  }>) {
+  }>, actor: PublishActor) {
     const publishedAt = new Date();
     const topics = stringArray(parsed.pubspec.topics);
     const platforms = platformsFromPubspec(parsed.pubspec);
+    const calculatedScore = scoreParsedPackage(parsed);
     await this.prisma.$transaction(async (transaction) => {
       const publisher = await transaction.publisher.upsert({
         where: { publisherId: "local.private" },
@@ -310,6 +314,7 @@ export class PrismaRegistryRepository implements RegistryRepository {
           archiveObjectKey: archivePath,
           archiveSha256: parsed.sha256,
           publishedAt,
+          publishedBy: actor.username ?? actor.id,
           isPrerelease: Boolean(semver.prerelease(parsed.version)),
           sourceType: "native"
         }
@@ -323,17 +328,51 @@ export class PrismaRegistryRepository implements RegistryRepository {
         constraintRaw: dependency.constraint,
         isDirect: true
       })) });
-      await transaction.score.create({ data: { packageVersionId: versionRecord.id, grantedPoints: 0, maxPoints: 160, qualityScore: 0, popularityScore: 0, maintenanceScore: 0, tagsJson: [], weightsJson: {}, breakdownJson: [] } });
-      const versions = await transaction.packageVersion.findMany({ where: { packageId: packageRecord.id }, select: { id: true, version: true } });
-      const latest = versions.sort((a, b) => semver.rcompare(a.version, b.version))[0]!;
+      await transaction.score.create({ data: { packageVersionId: versionRecord.id, ...scoreData(calculatedScore) } });
+      const versions = await transaction.packageVersion.findMany({ where: { packageId: packageRecord.id }, select: { id: true, version: true, retractedAt: true } });
+      const latest = selectLatestRelease(versions)!;
       await transaction.package.update({ where: { id: packageRecord.id }, data: { latestVersionId: latest.id } });
       await transaction.searchDocument.upsert({
         where: { packageId: packageRecord.id },
         update: { packageVersionId: latest.id, name: parsed.name, description: parsed.description, readmeExcerpt: parsed.readme.slice(0, 500), topicsJson: topics, publisherIdentifier: publisher.publisherId, platformsJson: platforms, tagsJson: [], rankingFeaturesJson: {} },
         create: { packageId: packageRecord.id, packageVersionId: latest.id, name: parsed.name, description: parsed.description, readmeExcerpt: parsed.readme.slice(0, 500), topicsJson: topics, publisherIdentifier: publisher.publisherId, platformsJson: platforms, tagsJson: [], rankingFeaturesJson: {} }
       });
-      await transaction.auditLog.create({ data: { subjectType: "package_version", subjectId: `${parsed.name}@${parsed.version}`, actorId: "registry-publisher", action: "package.publish", payloadJson: { sha256: parsed.sha256 } } });
+      await transaction.auditLog.create({ data: { subjectType: "package_version", subjectId: `${parsed.name}@${parsed.version}`, actorId: actor.id, action: "package.publish", payloadJson: { sha256: parsed.sha256, publishedBy: actor.username ?? actor.id } } });
     });
+  }
+
+  private async backfillEmptyScores() {
+    const versions = await this.prisma.packageVersion.findMany({
+      where: { scores: { some: {} } },
+      include: {
+        files: { select: { path: true } },
+        dependencies: true,
+        scores: { orderBy: { computedAt: "desc" }, take: 1 }
+      }
+    });
+    for (const version of versions) {
+      const current = version.scores[0];
+      if (!current) continue;
+      const emptyScore = current.grantedPoints === 0 && (!Array.isArray(current.breakdownJson) || current.breakdownJson.length === 0);
+      const automaticScoreNeedsDetails = isAutomaticPackageScore(current.weightsJson) && !hasScoreDetails(current.breakdownJson);
+      if (!emptyScore && !automaticScoreNeedsDetails) continue;
+      const pubspec = jsonRecord(version.pubspecJson);
+      const calculated = calculatePackageScore({
+        pubspec,
+        description: String(pubspec.description ?? ""),
+        readme: version.readmeHtml ?? "",
+        changelog: version.changelogHtml ?? "",
+        files: version.files,
+        dependencies: version.dependencies.map((dependency) => ({
+          name: dependency.name,
+          constraint: dependency.constraintRaw,
+          scope: dependencyScopeFromDatabase(dependency.scope),
+          source: sourceFromDatabase(dependency.sourceKind)
+        })),
+        downloads30d: current.downloadCount30d
+      });
+      await this.prisma.score.update({ where: { id: current.id }, data: scoreData(calculated) });
+    }
   }
 
   private summary(item: DatabasePackage): PackageSummary | null {
@@ -376,11 +415,13 @@ function mapVersion(item: DatabaseVersion): PackageVersion {
     version: item.version,
     pubspec,
     publishedAt: item.publishedAt.toISOString(),
+    publishedBy: item.publishedBy,
     sdk: { dart: String(environment.sdk ?? "any"), ...(environment.flutter ? { flutter: String(environment.flutter) } : {}) },
     platforms: platformsFromPubspec(pubspec),
     archiveSha256: item.archiveSha256,
     retractedAt: item.retractedAt?.toISOString() ?? null,
     prerelease: item.isPrerelease,
+    releaseChannel: releaseChannel(item.version),
     sourceType: item.sourceType === "pubdev_import" ? "pubdev_import" : "native"
   };
 }
@@ -398,6 +439,31 @@ function scoreFromDatabase(item?: DatabaseScore): Score {
   };
 }
 
+function scoreData(score: Score) {
+  return {
+    grantedPoints: score.grantedPoints,
+    maxPoints: score.maxPoints,
+    qualityScore: score.qualityScore,
+    popularityScore: score.popularityScore,
+    maintenanceScore: score.maintenanceScore,
+    tagsJson: score.tags as Prisma.InputJsonArray,
+    weightsJson: SCORE_WEIGHTS as Prisma.InputJsonObject,
+    breakdownJson: score.breakdown as Prisma.InputJsonArray
+  };
+}
+
+function isAutomaticPackageScore(value: Prisma.JsonValue) {
+  const weights = jsonRecord(value);
+  return ["conventions", "documentation", "platforms", "analysis", "dependencies"].every((key) => typeof weights[key] === "number");
+}
+
+function hasScoreDetails(value: Prisma.JsonValue) {
+  return Array.isArray(value) && value.length > 0 && value.every((item) => {
+    const breakdown = jsonRecord(item);
+    return Array.isArray(breakdown.details);
+  });
+}
+
 function mapImport(item: { id: string; packageName: string; mode: string; status: JobStatus; requestedVersionsJson: Prisma.JsonValue; summaryJson: Prisma.JsonValue | null; createdAt: Date }): ImportJobRecord {
   return {
     id: item.id,
@@ -410,7 +476,7 @@ function mapImport(item: { id: string; packageName: string; mode: string; status
   };
 }
 
-function selectLatest<T extends { version: string }>(versions: T[]) { return [...versions].sort((a, b) => semver.rcompare(a.version, b.version))[0]; }
+function selectLatest<T extends { version: string; retractedAt?: unknown }>(versions: T[]) { return selectLatestRelease(versions); }
 function compareDatabaseVersions(a: DatabaseVersion, b: DatabaseVersion) { return semver.rcompare(a.version, b.version); }
 function relevance(item: PackageSummary, query: string) { const value = query.toLowerCase(); return (item.name === value ? 1000 : item.name.includes(value) ? 500 : 0) + (item.description.toLowerCase().includes(value) ? 100 : 0) + item.score; }
 function jsonRecord(value: unknown): Record<string, unknown> { return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {}; }

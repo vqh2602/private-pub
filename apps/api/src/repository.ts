@@ -1,11 +1,13 @@
 import type { PackageFile, PackageSummary } from "@private-pub/contracts";
 import { createHash, randomUUID } from "node:crypto";
-import { demoDetails, score } from "./demo-data.js";
-import type { AccountRecord, ImportJobRecord, RegistryRepository, TokenRecord } from "./domain.js";
+import { demoDetails } from "./demo-data.js";
+import type { AccountRecord, ImportJobRecord, PublishActor, RegistryRepository, TokenRecord } from "./domain.js";
 import { parsePackageArchive } from "./archive.js";
 import semver from "semver";
 import { mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import { scoreParsedPackage } from "./scoring.js";
+import { releaseChannel, selectLatestRelease } from "./release-channel.js";
 
 export class DemoRegistryRepository implements RegistryRepository {
   readonly mode = "demo" as const;
@@ -26,7 +28,7 @@ export class DemoRegistryRepository implements RegistryRepository {
     for (const filename of filenames) {
       const archive = await readFile(join(directory, filename));
       const parsed = await parsePackageArchive(archive);
-      this.registerParsedArchive(parsed, archive);
+      this.registerParsedArchive(parsed, archive, { id: "restored-archive", username: "Unknown" });
     }
   }
 
@@ -58,9 +60,15 @@ export class DemoRegistryRepository implements RegistryRepository {
   async getFile(name: string, version: string, path: string): Promise<PackageFile | null> { return (await this.getFiles(name, version))?.find((item) => item.path === path) ?? null; }
   async getScore(name: string, version: string) { return (await this.getVersion(name, version)) ? structuredClone(this.details.get(name)?.score ?? null) : null; }
   async setRetraction(name: string, version: string, retracted: boolean) {
-    const item = this.details.get(name)?.versions.find((entry) => entry.version === version);
-    if (!item) return null;
+    const detail = this.details.get(name);
+    const item = detail?.versions.find((entry) => entry.version === version);
+    if (!item || !detail) return null;
     item.retractedAt = retracted ? new Date().toISOString() : null;
+    const latest = selectLatestRelease(detail.versions);
+    if (latest) {
+      detail.latestVersion = latest;
+      detail.package.latestVersion = latest.version;
+    }
     return structuredClone(item);
   }
   async setDiscontinued(name: string, discontinued: boolean) {
@@ -89,10 +97,12 @@ export class DemoRegistryRepository implements RegistryRepository {
   async saveToken(token: TokenRecord) { this.tokens.set(token.id, token); }
   async authenticateToken(tokenHash: string) {
     const token = [...this.tokens.values()].find((item) => item.tokenHash === tokenHash && !item.revokedAt && (!item.expiresAt || Date.parse(item.expiresAt) > Date.now()));
-    return token ? { id: token.id, scopes: token.scopes } : null;
+    if (!token) return null;
+    const account = this.accounts.get(token.subjectId);
+    return { id: token.subjectId, username: account?.username, role: account?.role, scopes: token.scopes };
   }
   async revokeToken(id: string, accountId: string) { const token = this.tokens.get(id); if (!token || token.subjectId !== accountId) return false; token.revokedAt = new Date().toISOString(); return true; }
-  async publishArchive(archive: Buffer) {
+  async publishArchive(archive: Buffer, actor: PublishActor) {
     const parsed = await parsePackageArchive(archive);
     const existing = this.details.get(parsed.name);
     if (existing?.versions.some((item) => item.version === parsed.version)) throw new Error(`Version ${parsed.version} of ${parsed.name} already exists.`);
@@ -104,11 +114,11 @@ export class DemoRegistryRepository implements RegistryRepository {
       await writeFile(temporary, archive, { flag: "wx" });
       await rename(temporary, destination);
     }
-    this.registerParsedArchive(parsed, archive);
+    this.registerParsedArchive(parsed, archive, actor);
     return { name: parsed.name, version: parsed.version, packageCreated: !existing };
   }
 
-  private registerParsedArchive(parsed: Awaited<ReturnType<typeof parsePackageArchive>>, archive: Buffer) {
+  private registerParsedArchive(parsed: Awaited<ReturnType<typeof parsePackageArchive>>, archive: Buffer, actor: PublishActor) {
     const existing = this.details.get(parsed.name);
     if (existing?.versions.some((item) => item.version === parsed.version)) throw new Error(`Version ${parsed.version} of ${parsed.name} already exists.`);
     const publishedAt = new Date().toISOString();
@@ -116,39 +126,45 @@ export class DemoRegistryRepository implements RegistryRepository {
       version: parsed.version,
       pubspec: parsed.pubspec,
       publishedAt,
+      publishedBy: actor.username ?? actor.id,
       sdk: { dart: parsed.dartConstraint, ...(parsed.flutterConstraint ? { flutter: parsed.flutterConstraint } : {}) },
       platforms: parsed.flutterConstraint ? ["android", "ios", "web", "linux", "macos", "windows"] : ["android", "ios", "web", "linux", "macos", "windows"],
       archiveSha256: parsed.sha256,
       retractedAt: null,
       prerelease: Boolean(semver.prerelease(parsed.version)),
+      releaseChannel: releaseChannel(parsed.version),
       sourceType: "native" as const
     };
     const dependencies = parsed.dependencies.map((dependency) => ({
       ...dependency,
       registry: dependency.source === "sdk" ? "sdk" as const : dependency.source === "git" ? "git" as const : dependency.source === "path" ? "path" as const : this.details.has(dependency.name) ? "private" as const : "pubdev" as const
     }));
+    const calculatedScore = scoreParsedPackage(parsed);
     if (existing) {
       existing.versions.push(packageVersion);
       existing.versions.sort((a, b) => semver.rcompare(a.version, b.version));
-      if (existing.versions[0]?.version === parsed.version) {
+      if (selectLatestRelease(existing.versions)?.version === parsed.version) {
         existing.latestVersion = packageVersion;
         existing.package.latestVersion = parsed.version;
         existing.package.description = parsed.description;
         existing.package.updatedAt = publishedAt;
         existing.requirements = { dartSdkConstraint: parsed.dartConstraint, dartSdkMinimum: parsed.dartMinimum, flutterConstraint: parsed.flutterConstraint, flutterMinimum: parsed.flutterMinimum };
         existing.dependencies = dependencies;
+        existing.score = calculatedScore;
+        existing.package.score = calculatedScore.grantedPoints;
+        existing.package.hasPreview = parsed.files.some((file) => file.preview !== "unsupported");
         existing.readme = parsed.readme;
         existing.changelog = parsed.changelog;
         existing.files = parsed.files;
       }
     } else {
       this.details.set(parsed.name, {
-        package: { name: parsed.name, publisherId: "local.private", description: parsed.description, latestVersion: parsed.version, isDiscontinued: false, topics: [parsed.flutterConstraint ? "flutter" : "dart"], updatedAt: publishedAt, downloads30d: 0, score: 140, hasPreview: parsed.files.some((file) => file.preview !== "unsupported") },
+        package: { name: parsed.name, publisherId: "local.private", description: parsed.description, latestVersion: parsed.version, isDiscontinued: false, topics: [parsed.flutterConstraint ? "flutter" : "dart"], updatedAt: publishedAt, downloads30d: 0, score: calculatedScore.grantedPoints, hasPreview: parsed.files.some((file) => file.preview !== "unsupported") },
         latestVersion: packageVersion,
         versions: [packageVersion],
         requirements: { dartSdkConstraint: parsed.dartConstraint, dartSdkMinimum: parsed.dartMinimum, flutterConstraint: parsed.flutterConstraint, flutterMinimum: parsed.flutterMinimum },
         dependencies,
-        score: { ...structuredClone(score), grantedPoints: 140 },
+        score: calculatedScore,
         readme: parsed.readme,
         changelog: parsed.changelog,
         files: parsed.files
