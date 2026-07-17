@@ -105,7 +105,7 @@ export class DemoRegistryRepository implements RegistryRepository {
       await rename(temporary, destination);
     }
     this.registerParsedArchive(parsed, archive);
-    return { name: parsed.name, version: parsed.version };
+    return { name: parsed.name, version: parsed.version, packageCreated: !existing };
   }
 
   private registerParsedArchive(parsed: Awaited<ReturnType<typeof parsePackageArchive>>, archive: Buffer) {

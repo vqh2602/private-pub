@@ -10,6 +10,29 @@ import { join } from "node:path";
 import { DemoRegistryRepository, hashToken } from "./repository.js";
 import { hashPassword, verifyPassword } from "./password.js";
 import { issueToken } from "./security.js";
+import { gunzipSync, gzipSync } from "node:zlib";
+
+function multipartArchive(archive: Buffer, filename = "package.tar.gz") {
+  const boundary = `----private-pub-${Math.random().toString(16).slice(2)}`;
+  return {
+    boundary,
+    body: Buffer.concat([
+      Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${filename}"\r\nContent-Type: application/gzip\r\n\r\n`),
+      archive,
+      Buffer.from(`\r\n--${boundary}--\r\n`)
+    ])
+  };
+}
+
+function archiveWithVersion(archive: Buffer, from: string, to: string) {
+  if (from.length !== to.length) throw new Error("Fixture versions must have the same length.");
+  const tarball = gunzipSync(archive);
+  const marker = Buffer.from(`version: ${from}`);
+  const offset = tarball.indexOf(marker);
+  if (offset < 0) throw new Error(`Could not find fixture version ${from}.`);
+  tarball.set(Buffer.from(`version: ${to}`), offset);
+  return gzipSync(tarball);
+}
 
 describe("registry API", () => {
   let app: FastifyInstance;
@@ -34,6 +57,43 @@ describe("registry API", () => {
     expect(detail.requirements.dartSdkMinimum).toBe("3.4.0");
     expect(detail.requirements.flutterMinimum).toBe("3.22.0");
     expect(detail.dependencies).toContainEqual(expect.objectContaining({ name: "collection", constraint: "^1.19.0" }));
+  });
+  it("imports a .tar.gz file, creates its package, and adds a new version", async () => {
+    const isolated = await buildApp();
+    try {
+      const firstArchive = readFileSync(new URL("../../../fixtures/archives/sample_package-1.0.0.tar.gz", import.meta.url));
+      const firstUpload = multipartArchive(firstArchive);
+      const created = await isolated.inject({
+        method: "POST",
+        url: "/v1/imports/file",
+        headers: { "content-type": `multipart/form-data; boundary=${firstUpload.boundary}` },
+        payload: firstUpload.body
+      });
+      expect(created.statusCode).toBe(201);
+      expect(created.json()).toEqual(expect.objectContaining({ packageName: "sample_package", version: "1.0.0", action: "package_created" }));
+
+      const secondUpload = multipartArchive(archiveWithVersion(firstArchive, "1.0.0", "1.1.0"));
+      const versionAdded = await isolated.inject({
+        method: "POST",
+        url: "/v1/imports/file",
+        headers: { "content-type": `multipart/form-data; boundary=${secondUpload.boundary}` },
+        payload: secondUpload.body
+      });
+      expect(versionAdded.statusCode).toBe(201);
+      expect(versionAdded.json()).toEqual(expect.objectContaining({ packageName: "sample_package", version: "1.1.0", action: "version_added" }));
+
+      const duplicateUpload = multipartArchive(firstArchive);
+      const duplicate = await isolated.inject({
+        method: "POST",
+        url: "/v1/imports/file",
+        headers: { "content-type": `multipart/form-data; boundary=${duplicateUpload.boundary}` },
+        payload: duplicateUpload.body
+      });
+      expect(duplicate.statusCode).toBe(409);
+      expect(duplicate.json().error).toBe("version_exists");
+    } finally {
+      await isolated.close();
+    }
   });
   it("implements the dart pub multipart publish handshake", async () => {
     const negotiation = await app.inject({

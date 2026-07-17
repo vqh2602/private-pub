@@ -1,0 +1,107 @@
+.wizardSteps span {
+  flex: 0 0 auto;
+}
+
+.wizardSteps span:not(:last-child)::after {
+  content: "";
+  width: clamp(20px, 8vw, 105px);
+  height: 1px;
+  margin-left: 12px;
+  background: var(--line);
+}
+
+.archiveDropzone {
+  min-height: 210px;
+  place-items: center;
+  align-content: center;
+  gap: 7px !important;
+  border: 1.5px dashed var(--line);
+  border-radius: 13px;
+  background: var(--surface-2);
+  cursor: pointer;
+  text-align: center;
+  transition: border-color .15s, background .15s;
+}
+
+.archiveDropzone:hover,
+.archiveDropzone.hasFile {
+  border-color: var(--blue);
+  background: var(--blue-soft);
+}
+
+.archiveDropzone input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.archiveDropzone svg {
+  width: 38px;
+  height: 38px;
+  margin-bottom: 5px;
+  color: var(--blue);
+}
+
+.archiveDropzone strong {
+  max-width: 90%;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 15px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.archiveDropzone span {
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.importChecks {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 9px 18px;
+  padding: 15px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+.importChecks span {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.importChecks svg {
+  flex: 0 0 auto;
+  width: 15px;
+  color: var(--green);
+}
+
+.validationError {
+  color: var(--red);
+  border-color: color-mix(in srgb, var(--red) 35%, var(--line));
+  background: #c6383812;
+}
+
+.validationSuccess {
+  color: var(--green);
+  border-color: color-mix(in srgb, var(--green) 35%, var(--line));
+  background: var(--green-soft);
+}
+
+.validationSuccess a {
+  display: inline-block;
+  margin-top: 5px;
+  color: var(--blue);
+  font-weight: 750;
+}
+
+@media (max-width: 720px) {
+  .importChecks { grid-template-columns: 1fr; }
+  .wizardSteps span:not(:last-child)::after { width: clamp(12px, 9vw, 55px); margin-left: 5px; }
+}

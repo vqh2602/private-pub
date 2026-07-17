@@ -162,6 +162,33 @@ export async function registerRoutes(app: FastifyInstance, repository: RegistryR
     const job = await repository.createImport({ packageName: input.packageName, versions: input.versions, mode: input.mode });
     return reply.code(202).send(job);
   });
+  app.post("/v1/imports/file", { preHandler: scopes("imports:write") }, async (request, reply) => {
+    const file = await request.file();
+    if (!file) return reply.code(400).send({ error: "archive_missing", message: "Chọn một file package .tar.gz để import." });
+    if (!file.filename.toLowerCase().endsWith(".tar.gz")) {
+      file.file.resume();
+      return reply.code(400).send({ error: "invalid_file_type", message: "File import phải có định dạng .tar.gz." });
+    }
+    try {
+      const published = await repository.publishArchive(await file.toBuffer());
+      const action = published.packageCreated ? "package_created" : "version_added";
+      return reply.code(201).send({
+        packageName: published.name,
+        version: published.version,
+        action,
+        message: published.packageCreated
+          ? `Đã xác minh và tạo package ${published.name} ${published.version}.`
+          : `Đã xác minh và thêm version ${published.version} vào package ${published.name}.`
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Không thể xác minh package archive.";
+      const statusCode = typeof (error as { statusCode?: unknown })?.statusCode === "number" ? (error as { statusCode: number }).statusCode : undefined;
+      if (statusCode === 413) return reply.code(413).send({ error: "archive_too_large", message: "File package vượt quá giới hạn upload cho phép." });
+      const duplicate = /already exists/i.test(message);
+      request.log.warn({ filename: file.filename, error: message }, "File import rejected");
+      return reply.code(duplicate ? 409 : 400).send({ error: duplicate ? "version_exists" : "invalid_archive", message });
+    }
+  });
   app.get("/v1/imports", { preHandler: scopes("packages:read") }, async () => ({ items: await repository.listImports() }));
   app.get("/v1/imports/:jobId", { preHandler: scopes("packages:read") }, async (request, reply) => (await repository.getImport((request.params as { jobId: string }).jobId)) ?? reply.code(404).send({ error: "not_found" }));
   app.post("/v1/analyses/recompute", { preHandler: scopes("packages:admin") }, async (request, reply) => reply.code(202).send({ id: `ana_${randomUUID().slice(0, 16)}`, status: "queued", input: request.body }));

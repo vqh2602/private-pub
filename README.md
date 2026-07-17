@@ -228,6 +228,7 @@ GET    /v1/packages/:name/versions/:version/files
 GET    /v1/packages/:name/versions/:version/files/*path
 GET    /v1/packages/:name/versions/:version/score
 POST   /v1/imports/pubdev
+POST   /v1/imports/file
 GET    /v1/imports/:jobId
 POST   /v1/analyses/recompute
 POST   /v1/tokens

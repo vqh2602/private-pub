@@ -43,6 +43,12 @@ export interface TokenSummary {
   createdAt: string;
 }
 
+export interface PublishArchiveResult {
+  name: string;
+  version: string;
+  packageCreated: boolean;
+}
+
 export interface RegistryRepository {
   readonly mode: "demo" | "database";
   initialize(): Promise<void>;
@@ -67,6 +73,6 @@ export interface RegistryRepository {
   saveToken(token: TokenRecord): Promise<void>;
   authenticateToken(tokenHash: string): Promise<{ id: string; scopes: string[] } | null>;
   revokeToken(id: string, accountId: string): Promise<boolean>;
-  publishArchive(archive: Buffer): Promise<{ name: string; version: string }>;
+  publishArchive(archive: Buffer): Promise<PublishArchiveResult>;
   getArchive(name: string, version: string): Promise<Buffer | null>;
 }

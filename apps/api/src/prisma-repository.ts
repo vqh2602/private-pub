@@ -238,6 +238,7 @@ export class PrismaRegistryRepository implements RegistryRepository {
 
   async publishArchive(archive: Buffer) {
     const parsed = await parsePackageArchive(archive);
+    const existingPackage = await this.prisma.package.findUnique({ where: { name: parsed.name }, select: { id: true } });
     const duplicate = await this.prisma.packageVersion.findFirst({ where: { package: { name: parsed.name }, version: parsed.version }, select: { id: true } });
     if (duplicate) throw new Error(`Version ${parsed.version} of ${parsed.name} already exists.`);
 
@@ -272,7 +273,7 @@ export class PrismaRegistryRepository implements RegistryRepository {
       await rm(previewDirectory, { recursive: true, force: true });
       throw error;
     }
-    return { name: parsed.name, version: parsed.version };
+    return { name: parsed.name, version: parsed.version, packageCreated: !existingPackage };
   }
 
   async getArchive(name: string, version: string) {
