@@ -3,6 +3,7 @@ import type { PackageFile } from "@private-pub/contracts";
 import { Badge, EmptyState } from "@private-pub/ui";
 import { ChevronRight, File, FileCode2, Folder, GitCompareArrows, PanelRightClose } from "lucide-react";
 import { useMemo, useState } from "react";
+import { MarkdownPreview } from "./markdown-preview";
 
 type Mode = "preview" | "code" | "raw" | "diff";
 export function FileExplorer({ files, version }: { files: PackageFile[]; version: string }) {
@@ -34,8 +35,7 @@ function FileContent({ file, mode }: { file: PackageFile; mode: Mode }) {
   if (mode === "diff") return <div className="diff"><div className="diff-head">Comparing 2.3.0 → 2.3.1</div><pre><span className="removed">- color: oldPrimary</span>{"\n"}<span className="added">+ color: auroraPrimary</span>{"\n"}{file.content ?? "Binary content cannot be diffed."}</pre></div>;
   if (!file.content) return <EmptyState title="Preview unavailable" description="Download the raw file to inspect this binary artifact." />;
   if (mode === "preview" && file.preview === "markdown") {
-    const lines = file.content.split("\n");
-    return <article className="markdown-preview">{lines.map((line, index) => line.startsWith("# ") ? <h1 key={index}>{line.slice(2)}</h1> : line.startsWith("## ") ? <h2 key={index}>{line.slice(3)}</h2> : line.startsWith("- ") ? <li key={index}>{line.slice(2)}</li> : line ? <p key={index}>{line}</p> : <br key={index} />)}</article>;
+    return <article className="markdown-preview"><MarkdownPreview content={file.content} /></article>;
   }
   if (mode === "preview" && file.preview === "structured") return <div className="structured-preview"><div className="summary-tile"><span>Package</span><strong>aurora_ui</strong></div><div className="summary-tile"><span>Version</span><strong>2.3.1</strong></div><pre>{file.content}</pre></div>;
   return <pre className="source-code"><code>{file.content}</code></pre>;

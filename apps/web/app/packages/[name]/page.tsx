@@ -1,4 +1,5 @@
 import { CopySnippet } from "@/components/copy-snippet";
+import { MarkdownPreview } from "@/components/markdown-preview";
 import { PackageTabs } from "@/components/package-tabs";
 import { getPackage } from "@/lib/api";
 import { Badge, StatCard } from "@private-pub/ui";
@@ -6,21 +7,26 @@ import { Box, Braces, CheckCircle2, Clock3, Download, ExternalLink, GitBranch, L
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import type { ReactNode } from "react";
 
 export async function generateMetadata({ params }: { params: Promise<{ name: string }> }): Promise<Metadata> { const { name } = await params; return { title: name }; }
 
 export default async function PackagePage({ params, searchParams }: { params: Promise<{ name: string }>; searchParams: Promise<{ tab?: string }> }) {
   const { name } = await params; const { tab = "readme" } = await searchParams;
   const detail = await getPackage(name); if (!detail) notFound();
+  const repositoryUrl = externalUrl(detail.latestVersion.pubspec.repository);
+  const documentationUrl = externalUrl(detail.latestVersion.pubspec.documentation) ?? externalUrl(detail.latestVersion.pubspec.homepage);
   return <main className="package-page">
-    <section className="package-hero"><div className="content-shell"><div className="breadcrumbs"><Link href="/">Packages</Link><span>/</span><strong>{name}</strong></div><div className="package-title-row"><div className="big-package-icon"><Box /></div><div className="package-title"><div><h1>{name}</h1><Badge tone="blue">v{detail.package.latestVersion}</Badge><Badge tone="green">Stable</Badge></div><p>{detail.package.description}</p><div className="package-meta"><span><CheckCircle2 size={15} />Published by <Link href={`/publishers/${detail.package.publisherId}`}>{detail.package.publisherId}</Link></span><span><Clock3 size={15} />Updated 1 day ago</span></div></div><div className="package-actions"><button><GitBranch size={16} />Repository</button><button><ExternalLink size={16} />Documentation</button></div></div></div></section>
+    <section className="package-hero"><div className="content-shell"><div className="breadcrumbs"><Link href="/">Packages</Link><span>/</span><strong>{name}</strong></div><div className="package-title-row"><div className="big-package-icon"><Box /></div><div className="package-title"><div><h1>{name}</h1><Badge tone="blue">v{detail.package.latestVersion}</Badge><Badge tone="green">Stable</Badge></div><p>{detail.package.description}</p><div className="package-meta"><span><CheckCircle2 size={15} />Published by <Link href={`/publishers/${detail.package.publisherId}`}>{detail.package.publisherId}</Link></span><span><Clock3 size={15} />Updated 1 day ago</span></div></div><div className="package-actions"><PackageLink href={repositoryUrl} icon={<GitBranch size={16} />} label="Repository" /><PackageLink href={documentationUrl} icon={<ExternalLink size={16} />} label="Documentation" /></div></div></div></section>
     <div className="content-shell"><PackageTabs name={name} active={tab} /><div className="detail-layout"><section className="detail-main">
       {tab === "versions" ? <Versions detail={detail} name={name} /> : tab === "scores" ? <Scores detail={detail} /> : tab === "admin" ? <PackageAdmin name={name} /> : tab === "changelog" ? <Document title="Changelog" text={detail.changelog} /> : <div className="readme-stack"><Document title="About this package" text={detail.readme} /><Dependencies dependencies={detail.dependencies} /></div>}
     </section><aside className="package-sidebar"><div className="side-card"><span className="eyebrow">Install</span><h3>Add to pubspec.yaml</h3><CopySnippet>{`${name}: ^${detail.package.latestVersion}`}</CopySnippet><a href="/tokens">Configure private registry →</a></div><div className="side-card requirements-card"><span className="eyebrow">Requirements</span><div className="requirement-row"><span><Braces size={16} /></span><div><small>Dart SDK minimum</small><strong>{detail.requirements.dartSdkMinimum}</strong><code>{detail.requirements.dartSdkConstraint}</code></div></div>{detail.requirements.flutterMinimum && <div className="requirement-row"><span><Layers3 size={16} /></span><div><small>Flutter minimum</small><strong>{detail.requirements.flutterMinimum}</strong><code>{detail.requirements.flutterConstraint}</code></div></div>}</div><div className="side-card"><span className="eyebrow">Package metadata</span><dl><dt>License</dt><dd>MIT</dd><dt>SDK</dt><dd>{detail.requirements.flutterMinimum ? "Flutter" : "Dart"}</dd><dt>Platforms</dt><dd>{detail.latestVersion.platforms.join(", ")}</dd><dt>Archive</dt><dd>{detail.latestVersion.archiveSha256.slice(0, 10)}…</dd></dl></div><div className="side-card security"><ShieldCheck /><div><strong>Supply-chain verified</strong><p>Archive integrity checked and analysis completed.</p></div></div></aside></div></div>
   </main>;
 }
 
-function Document({ title, text }: { title: string; text: string }) { return <article className="readme"><span className="eyebrow">Documentation</span><h2>{title}</h2>{text.split("\n").map((line, i) => line.startsWith("# ") ? <h1 key={i}>{line.slice(2)}</h1> : line.startsWith("## ") ? <h2 key={i}>{line.slice(3)}</h2> : line.startsWith("- ") ? <li key={i}>{line.slice(2)}</li> : line ? <p key={i}>{line}</p> : <br key={i} />)}</article>; }
+function Document({ title, text }: { title: string; text: string }) { return <article className="readme"><span className="eyebrow">Documentation</span><h2>{title}</h2><MarkdownPreview content={text} /></article>; }
+function PackageLink({ href, icon, label }: { href: string | null; icon: ReactNode; label: string }) { return href ? <a href={href} target="_blank" rel="noreferrer">{icon}{label}</a> : <span className="disabled" title={`${label} URL is not declared in pubspec.yaml`}>{icon}{label}</span>; }
+function externalUrl(value: unknown) { return typeof value === "string" && /^https?:\/\//i.test(value) ? value : null; }
 function Dependencies({ dependencies }: { dependencies: NonNullable<Awaited<ReturnType<typeof getPackage>>>["dependencies"] }) {
   const runtime = dependencies.filter((dependency) => dependency.scope === "dependencies");
   const development = dependencies.filter((dependency) => dependency.scope === "dev_dependencies");

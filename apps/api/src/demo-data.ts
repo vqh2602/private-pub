@@ -24,6 +24,8 @@ const version = (value: string, daysAgo: number, prerelease = false, sourceType:
     name: "aurora_ui",
     version: value,
     description: "Accessible design system for company Flutter apps",
+    homepage: "https://example.com/aurora-ui",
+    repository: "https://github.com/example/aurora-ui",
     environment: { sdk: ">=3.4.0 <4.0.0", flutter: ">=3.22.0" },
     dependencies: { flutter: { sdk: "flutter" }, collection: "^1.19.0" }
   },

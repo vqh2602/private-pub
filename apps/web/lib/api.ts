@@ -24,7 +24,7 @@ const fallbackPackages: PackageSummary[] = [
   { name: "secure_storage_plus", publisherId: "security.internal", description: "Opinionated encrypted storage with key rotation", latestVersion: "1.8.0", isDiscontinued: false, topics: ["flutter", "security"], updatedAt: "2026-07-11T09:00:00.000Z", downloads30d: 2890, score: 154, hasPreview: true }
 ];
 
-const v = { version: "2.3.1", pubspec: { name: "aurora_ui", version: "2.3.1", environment: { sdk: ">=3.4.0 <4.0.0", flutter: ">=3.22.0" }, dependencies: { flutter: { sdk: "flutter" } } }, publishedAt: "2026-07-16T08:30:00.000Z", sdk: { dart: ">=3.4.0 <4.0.0", flutter: ">=3.22.0" }, platforms: ["android", "ios", "web", "linux", "macos", "windows"], archiveSha256: "0a4cc3d8f1eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", retractedAt: null, prerelease: false, sourceType: "native" as const };
+const v = { version: "2.3.1", pubspec: { name: "aurora_ui", version: "2.3.1", homepage: "https://example.com/aurora-ui", repository: "https://github.com/example/aurora-ui", environment: { sdk: ">=3.4.0 <4.0.0", flutter: ">=3.22.0" }, dependencies: { flutter: { sdk: "flutter" } } }, publishedAt: "2026-07-16T08:30:00.000Z", sdk: { dart: ">=3.4.0 <4.0.0", flutter: ">=3.22.0" }, platforms: ["android", "ios", "web", "linux", "macos", "windows"], archiveSha256: "0a4cc3d8f1eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", retractedAt: null, prerelease: false, sourceType: "native" as const };
 const fallbackDetail: PackageDetail = {
   package: fallbackPackages[0]!, latestVersion: v, versions: [v],
   requirements: { dartSdkConstraint: ">=3.4.0 <4.0.0", dartSdkMinimum: "3.4.0", flutterConstraint: ">=3.22.0", flutterMinimum: "3.22.0" },
