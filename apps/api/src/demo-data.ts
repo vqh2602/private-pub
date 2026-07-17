@@ -20,6 +20,13 @@ export const score: Score = {
 
 const version = (value: string, daysAgo: number, prerelease = false, sourceType: "native" | "pubdev_import" = "native"): PackageVersion => ({
   version: value,
+  pubspec: {
+    name: "aurora_ui",
+    version: value,
+    description: "Accessible design system for company Flutter apps",
+    environment: { sdk: ">=3.4.0 <4.0.0", flutter: ">=3.22.0" },
+    dependencies: { flutter: { sdk: "flutter" }, collection: "^1.19.0" }
+  },
   publishedAt: new Date(Date.parse(now) - daysAgo * 86_400_000).toISOString(),
   sdk: { dart: ">=3.4.0 <4.0.0", flutter: ">=3.22.0" },
   platforms: ["android", "ios", "web", "linux", "macos", "windows"],

@@ -64,15 +64,100 @@ PostgreSQL is exposed on `5432`, Valkey on `6379`, MinIO on `9000`, and the MinI
 
 ## Database
 
-With PostgreSQL running:
+The database schema is PostgreSQL-only and is defined in [packages/database/prisma/schema.prisma](packages/database/prisma/schema.prisma). It contains package, version, archive metadata, file index, dependency, publisher, permission, token, import, analysis, score, search, and audit tables.
+
+### Local PostgreSQL bootstrap
+
+Requirements: Docker Desktop (or PostgreSQL 17+ installed locally), Node.js 22+, and pnpm 10+.
+
+1. Create the local environment file and start only PostgreSQL:
+
+```bash
+cp .env.example .env
+docker compose up -d postgres
+docker compose ps postgres
+```
+
+Wait until the service is `healthy`. The local default connection is:
+
+```text
+postgresql://private_pub:private_pub@localhost:5432/private_pub?schema=public
+```
+
+2. Export the connection string for Prisma commands. This is explicit so commands work regardless of the directory from which Prisma loads `.env`:
+
+```bash
+export DATABASE_URL='postgresql://private_pub:private_pub@localhost:5432/private_pub?schema=public'
+```
+
+3. Generate Prisma Client and create the table migration on the first local setup:
 
 ```bash
 pnpm db:generate
-pnpm db:migrate
+pnpm --filter @private-pub/database exec prisma migrate dev --name create_registry_tables
+```
+
+The committed `202607170001_init` migration enables the PostgreSQL `pg_trgm` extension. The command above creates and applies the follow-up migration containing the tables declared in `schema.prisma`. Commit that new migration when it is intended to be shared with the team.
+
+4. Optionally insert the sample publisher and package:
+
+```bash
 pnpm db:seed
 ```
 
-The first migration enables `pg_trgm`; Prisma owns the table definitions in `packages/database/prisma/schema.prisma`. Search v1 can combine PostgreSQL full-text vectors with trigram similarity. The current demo repository is intentionally in memory so UI/API development does not require a database; implement `PrismaRegistryRepository` behind the existing `RegistryRepository` interface to switch persistence.
+5. Verify the result:
+
+```bash
+pnpm --filter @private-pub/database exec prisma migrate status
+docker compose exec postgres psql -U private_pub -d private_pub -c '\dt'
+pnpm --filter @private-pub/database exec prisma studio
+```
+
+Prisma Studio opens a local database browser; stop it with `Ctrl+C` when finished.
+
+### Routine development commands
+
+After the initial setup, use these commands when the Prisma schema changes:
+
+```bash
+export DATABASE_URL='postgresql://private_pub:private_pub@localhost:5432/private_pub?schema=public'
+pnpm --filter @private-pub/database exec prisma migrate dev --name describe_the_change
+pnpm db:generate
+pnpm db:seed
+```
+
+Use a descriptive snake_case migration name, for example `add_package_visibility`. Do not edit an already-applied migration; add a new one instead.
+
+### Applying migrations in a deployed environment
+
+CI or production must only apply migrations already committed to Git. It must not run `prisma migrate dev`:
+
+```bash
+export DATABASE_URL='postgresql://USER:PASSWORD@HOST:5432/DATABASE?schema=public'
+pnpm --filter @private-pub/database exec prisma migrate deploy
+pnpm --filter @private-pub/database exec prisma migrate status
+```
+
+Use a secret manager or deployment environment variable for the production URL. Never commit production credentials into `.env`.
+
+### Resetting a local database
+
+Only use this for disposable local data; it removes all tables and records from `private_pub`:
+
+```bash
+export DATABASE_URL='postgresql://private_pub:private_pub@localhost:5432/private_pub?schema=public'
+pnpm --filter @private-pub/database exec prisma migrate reset
+```
+
+To remove Docker's PostgreSQL volume entirely, stop the stack and remove the named volume. This also permanently deletes local database data:
+
+```bash
+docker compose down --volumes
+```
+
+### Current application persistence mode
+
+The API currently uses `DemoRegistryRepository`, so published archives are stored locally under `DEMO_STORAGE_DIR` and not in PostgreSQL yet. PostgreSQL tables, Prisma Client, migrations, and seed data are ready; implementing `PrismaRegistryRepository` behind the existing `RegistryRepository` interface is the remaining step to make publish/search/control-plane data use SQL in production. Search can then combine PostgreSQL full-text vectors with `pg_trgm` similarity.
 
 ## Dart CLI flow
 
@@ -96,7 +181,7 @@ dependencies:
     version: ^2.3.1
 ```
 
-or set `PUB_HOSTED_URL=http://localhost:4000` for a controlled environment. The demo archive download route returns `501` until an `S3ArchiveStore` is configured; metadata, search, and upload negotiation are available.
+or set `PUB_HOSTED_URL=http://localhost:4000` for a controlled environment. In demo mode, newly published archives are parsed, indexed, and stored under `DEMO_STORAGE_DIR` (default `.private-pub-data/archives`) so they remain available across API restarts. Seeded historical archives return `501` until an `S3ArchiveStore` is configured.
 
 ## API overview
 
@@ -106,7 +191,7 @@ Hosted Pub surface:
 GET  /api/packages/:name
 GET  /api/packages/:name/versions/:version
 GET  /api/packages/:name/versions/:version.tar.gz
-GET  /api/packages/versions/newUpload
+GET  /api/packages/versions/new
 POST /api/uploads/:uploadId
 GET  /api/packages/versions/newUploadFinish
 ```

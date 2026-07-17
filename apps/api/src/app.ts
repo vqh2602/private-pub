@@ -4,15 +4,20 @@ import helmet from "@fastify/helmet";
 import rateLimit from "@fastify/rate-limit";
 import swagger from "@fastify/swagger";
 import swaggerUi from "@fastify/swagger-ui";
+import multipart from "@fastify/multipart";
 import { ZodError } from "zod";
 import { DemoRegistryRepository } from "./repository.js";
 import { registerRoutes } from "./routes.js";
 
 export async function buildApp() {
-  const app = Fastify({ logger: process.env.NODE_ENV !== "test", bodyLimit: Number(process.env.MAX_ARCHIVE_BYTES ?? 52_428_800) });
+  const maxArchiveBytes = Number(process.env.MAX_ARCHIVE_BYTES ?? 100 * 1024 * 1024);
+  const app = Fastify({ logger: process.env.NODE_ENV !== "test", trustProxy: true, bodyLimit: maxArchiveBytes });
   await app.register(cors, { origin: true });
   await app.register(helmet, { contentSecurityPolicy: false });
   await app.register(rateLimit, { max: 120, timeWindow: "1 minute" });
+  await app.register(multipart, {
+    limits: { files: 1, fileSize: maxArchiveBytes, fields: 20 }
+  });
   await app.register(swagger, { openapi: { info: { title: "Private Pub Registry API", version: "0.1.0" }, tags: [{ name: "pub", description: "Hosted Pub Repository API V2" }, { name: "control-plane", description: "Private application API" }] } });
   await app.register(swaggerUi, { routePrefix: "/docs" });
   app.decorateRequest("actor");
@@ -23,6 +28,8 @@ export async function buildApp() {
     const statusCode = typeof candidate.statusCode === "number" ? candidate.statusCode : 500;
     return reply.code(statusCode).send({ error: statusCode === 500 ? "internal_error" : normalized.name, message: normalized.message });
   });
-  await registerRoutes(app, new DemoRegistryRepository());
+  const repository = new DemoRegistryRepository(process.env.NODE_ENV === "test" ? undefined : process.env.DEMO_STORAGE_DIR ?? ".private-pub-data/archives");
+  await repository.initialize();
+  await registerRoutes(app, repository);
   return app;
 }

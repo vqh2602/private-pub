@@ -34,4 +34,6 @@ export interface RegistryRepository {
   listImports(): Promise<ImportJobRecord[]>;
   saveToken(token: TokenRecord): Promise<void>;
   revokeToken(id: string): Promise<boolean>;
+  publishArchive(archive: Buffer): Promise<{ name: string; version: string }>;
+  getArchive(name: string, version: string): Promise<Buffer | null>;
 }

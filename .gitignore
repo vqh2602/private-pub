@@ -10,3 +10,4 @@ coverage
 packages/database/prisma/dev.db
 packages/database/src/generated
 .DS_Store
+.private-pub-data

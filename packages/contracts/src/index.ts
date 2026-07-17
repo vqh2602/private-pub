@@ -26,6 +26,7 @@ export type Score = z.infer<typeof scoreSchema>;
 
 export const packageVersionSchema = z.object({
   version: z.string(),
+  pubspec: z.record(z.string(), z.unknown()),
   publishedAt: z.string().datetime(),
   sdk: z.object({ dart: z.string(), flutter: z.string().optional() }),
   platforms: z.array(z.string()),
