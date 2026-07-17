@@ -1,6 +1,6 @@
 name: private_pub_cli
 description: Inspect, compare, and upgrade Dart and Flutter dependencies from a private hosted Pub registry.
-version: 0.0.1
+version: 0.0.3
 repository: https://github.com/vqh2602/private-pub/tree/main/packages/private_pub_cli
 issue_tracker: https://github.com/vqh2602/private-pub/issues
 topics:

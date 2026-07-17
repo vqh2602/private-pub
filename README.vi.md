@@ -198,14 +198,13 @@ trực tiếp trong source bằng `dart run`, hoặc activate toàn cục để 
 ```bash
 cd packages/private_pub_cli
 dart pub global activate --source path .
-export PUB_HOSTED_URL=http://localhost:4000
 
-private_pub check
-private_pub versions aurora_ui
-private_pub compare aurora_ui 1.0.0 2.0.0
-private_pub outdated
-private_pub upgrade
-private_pub upgrade --major-versions --dry-run
+private_pub --host http://localhost:4000 check
+private_pub --host http://localhost:4000 versions aurora_ui
+private_pub --host http://localhost:4000 compare aurora_ui 1.0.0 2.0.0
+private_pub --host http://localhost:4000 outdated
+private_pub --host http://localhost:4000 upgrade
+private_pub --host http://localhost:4000 upgrade --major-versions --dry-run
 ```
 
 CLI tự chọn `flutter pub` cho Flutter project và `dart pub` cho Dart project.

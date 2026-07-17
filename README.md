@@ -208,7 +208,13 @@ dependencies:
     version: ^2.3.1
 ```
 
-or set `PUB_HOSTED_URL=http://localhost:4000` for a controlled environment. In demo mode, newly published archives are parsed, indexed, and stored under `DEMO_STORAGE_DIR` (default `.private-pub-data/archives`) so they remain available across API restarts. Seeded historical archives return `501` until an `S3ArchiveStore` is configured.
+Do not export `PUB_HOSTED_URL` in a shell that also runs public Pub commands:
+Pub has no fallback to pub.dev, so public packages would be looked up in the
+private registry. Use `private_pub --host http://localhost:4000` for private
+metadata commands instead. In demo mode, newly published archives are parsed,
+indexed, and stored under `DEMO_STORAGE_DIR` (default
+`.private-pub-data/archives`) so they remain available across API restarts.
+Seeded historical archives return `501` until an `S3ArchiveStore` is configured.
 
 ## API overview
 

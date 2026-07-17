@@ -26,18 +26,18 @@ dart pub global activate --source path .
 
 ## Configure
 
-Set a registry for private metadata commands (`check`, `versions`, and
-`compare`):
-
-```bash
-export PUB_HOSTED_URL=https://pub.company.dev
-```
-
-Alternatively, pass `--host` before the command:
+Pass `--host` before private metadata commands (`check`, `versions`, and
+`compare`). This affects only `private_pub`, not `dart pub` or `flutter pub`
+commands started directly from the same shell:
 
 ```bash
 private_pub --host https://pub.company.dev check
+private_pub --host https://pub.company.dev versions company_ui
 ```
+
+Avoid exporting `PUB_HOSTED_URL` in a shell that also runs normal Pub commands:
+an exported environment variable is inherited by every child process, including
+direct `dart pub` and `flutter pub` invocations.
 
 For a project that uses both pub.dev and a private registry, pin the registry
 on every private package in `pubspec.yaml`:
