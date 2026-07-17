@@ -1234,6 +1234,15 @@ td svg {
 .tree-folder {
   color: var(--text);
   font-weight: 700;
+  cursor: pointer;
+}
+.tree-folder .expanded {
+  transform: rotate(90deg);
+}
+.tree-children {
+  margin-left: 12px;
+  padding-left: 8px;
+  border-left: 1px solid var(--line);
 }
 .viewer-tabs {
   display: flex;

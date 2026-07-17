@@ -6,17 +6,34 @@ import { useMemo, useState } from "react";
 import { MarkdownPreview } from "./markdown-preview";
 
 type Mode = "preview" | "code" | "raw" | "diff";
+type FileTreeNode = {
+  name: string;
+  path: string;
+  file?: PackageFile;
+  children: FileTreeNode[];
+};
+
 export function FileExplorer({ files, version }: { files: PackageFile[]; version: string }) {
   const initial = files.find((file) => file.path === "README.md") ?? files.find((file) => file.type === "file")!;
   const [current, setCurrent] = useState(initial);
   const [mode, setMode] = useState<Mode>("preview");
-  const folders = useMemo(() => files.filter((f) => f.type === "dir"), [files]);
+  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(() => new Set());
+  const tree = useMemo(() => buildFileTree(files), [files]);
+
+  function toggleFolder(path: string) {
+    setExpandedFolders((openFolders) => {
+      const next = new Set(openFolders);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
+  }
+
   return <div className="explorer-grid">
     <aside className="file-tree panel-card">
       <div className="panel-title"><div><strong>Files</strong><small>aurora_ui {version}</small></div><Badge>{files.length} entries</Badge></div>
       <div className="tree-list">
-        {folders.map((folder) => <div className="tree-folder" key={folder.path}><ChevronRight size={14} /><Folder size={15} />{folder.path}</div>)}
-        {files.filter((f) => f.type === "file").map((file) => <button key={file.path} className={current?.path === file.path ? "active" : ""} onClick={() => setCurrent(file)}>{file.language === "dart" ? <FileCode2 size={15} /> : <File size={15} />}<span>{file.path}</span></button>)}
+        {tree.map((node) => <FileTreeItem key={node.path} node={node} currentPath={current?.path} expandedFolders={expandedFolders} onToggleFolder={toggleFolder} onSelectFile={setCurrent} />)}
       </div>
     </aside>
     <main className="viewer panel-card">
@@ -29,6 +46,52 @@ export function FileExplorer({ files, version }: { files: PackageFile[]; version
       <dl><dt>Path</dt><dd>{current?.path}</dd><dt>Language</dt><dd>{current?.language ?? "—"}</dd><dt>Size</dt><dd>{current?.size ? `${(current.size / 1024).toFixed(1)} KB` : "—"}</dd><dt>Preview</dt><dd>{current?.preview ?? "unsupported"}</dd><dt>Status</dt><dd><Badge tone="green">Ready</Badge></dd><dt>SHA256</dt><dd className="hash">a1b24ff09...e12a</dd></dl>
     </aside>
   </div>;
+}
+
+function FileTreeItem({ node, currentPath, expandedFolders, onToggleFolder, onSelectFile }: {
+  node: FileTreeNode;
+  currentPath: string | undefined;
+  expandedFolders: Set<string>;
+  onToggleFolder: (path: string) => void;
+  onSelectFile: (file: PackageFile) => void;
+}) {
+  if (node.file) {
+    return <button className={currentPath === node.file.path ? "active" : ""} onClick={() => onSelectFile(node.file!)}>{node.file.language === "dart" ? <FileCode2 size={15} /> : <File size={15} />}<span>{node.name}</span></button>;
+  }
+
+  const expanded = expandedFolders.has(node.path);
+  return <div className="tree-branch">
+    <button className="tree-folder" type="button" onClick={() => onToggleFolder(node.path)} aria-expanded={expanded}>
+      <ChevronRight className={expanded ? "expanded" : ""} size={14} /><Folder size={15} /><span>{node.name}</span>
+    </button>
+    {expanded && <div className="tree-children">{node.children.map((child) => <FileTreeItem key={child.path} node={child} currentPath={currentPath} expandedFolders={expandedFolders} onToggleFolder={onToggleFolder} onSelectFile={onSelectFile} />)}</div>}
+  </div>;
+}
+
+function buildFileTree(files: PackageFile[]): FileTreeNode[] {
+  const root: FileTreeNode = { name: "", path: "", children: [] };
+
+  for (const file of files) {
+    const parts = file.path.replace(/\/$/, "").split("/").filter(Boolean);
+    let parent = root;
+    parts.forEach((name, index) => {
+      const path = parts.slice(0, index + 1).join("/");
+      let node = parent.children.find((child) => child.name === name);
+      if (!node) {
+        node = { name, path, children: [] };
+        parent.children.push(node);
+      }
+      if (index === parts.length - 1 && file.type === "file") node.file = file;
+      parent = node;
+    });
+  }
+
+  const sortNodes = (nodes: FileTreeNode[]) => {
+    nodes.sort((a, b) => Number(Boolean(a.file)) - Number(Boolean(b.file)) || a.name.localeCompare(b.name));
+    nodes.forEach((node) => sortNodes(node.children));
+  };
+  sortNodes(root.children);
+  return root.children;
 }
 
 function FileContent({ file, mode }: { file: PackageFile; mode: Mode }) {
