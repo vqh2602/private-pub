@@ -54,6 +54,40 @@ enum DependencyScope {
   DEPENDENCY_OVERRIDES
 }
 
+enum AccountRole {
+  SUPER_ADMIN
+  ADMIN
+  USER
+}
+
+model Account {
+  id                 String        @id @default(cuid())
+  username           String        @unique
+  passwordHash       String        @map("password_hash")
+  role               AccountRole   @default(USER)
+  mustChangePassword Boolean       @default(false) @map("must_change_password")
+  isActive           Boolean       @default(true) @map("is_active")
+  createdAt          DateTime      @default(now()) @map("created_at")
+  updatedAt          DateTime      @updatedAt @map("updated_at")
+  sessions           AuthSession[]
+  tokens             ApiToken[]
+
+  @@map("accounts")
+}
+
+model AuthSession {
+  id         String   @id @default(cuid())
+  accountId  String   @map("account_id")
+  tokenHash  String   @unique @map("token_hash")
+  expiresAt  DateTime @map("expires_at")
+  createdAt  DateTime @default(now()) @map("created_at")
+  lastSeenAt DateTime @default(now()) @map("last_seen_at")
+  account    Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@index([accountId, expiresAt])
+  @@map("auth_sessions")
+}
+
 model Package {
   id                   BigInt           @id @default(autoincrement())
   name                 String           @unique
@@ -224,7 +258,9 @@ model PackagePermission {
 
 model ApiToken {
   id         BigInt    @id @default(autoincrement())
+  publicId   String    @unique @default(cuid()) @map("public_id")
   subjectId  String    @map("subject_id")
+  accountId  String?   @map("account_id")
   name       String
   tokenHash  String    @unique @map("token_hash")
   prefix     String
@@ -233,8 +269,10 @@ model ApiToken {
   lastUsedAt DateTime? @map("last_used_at")
   revokedAt  DateTime? @map("revoked_at")
   createdAt  DateTime  @default(now()) @map("created_at")
+  account    Account?  @relation(fields: [accountId], references: [id], onDelete: Cascade)
 
   @@index([subjectId, revokedAt])
+  @@index([accountId, revokedAt])
   @@map("api_tokens")
 }
 

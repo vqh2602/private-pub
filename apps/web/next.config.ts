@@ -1,8 +1,12 @@
 import type { NextConfig } from "next";
 import { dirname, resolve } from "node:path";
+import { loadEnvFile } from "node:process";
 import { fileURLToPath } from "node:url";
 
 const monorepoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+try { loadEnvFile(resolve(monorepoRoot, ".env")); } catch (error) {
+  if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+}
 
 const nextConfig: NextConfig = {
   transpilePackages: ["@private-pub/ui", "@private-pub/contracts"],

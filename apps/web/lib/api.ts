@@ -1,22 +1,27 @@
 import type { PackageDetail, PackageSummary } from "@private-pub/contracts";
 
 const serverApi = process.env.INTERNAL_API_URL ?? process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
+const allowDemoFallback = process.env.DEMO_MODE !== "false";
 
 export async function searchPackages(q = "", sort = "relevance"): Promise<PackageSummary[]> {
   try {
     const response = await fetch(`${serverApi}/v1/search?q=${encodeURIComponent(q)}&sort=${sort}`, { next: { revalidate: 30 } });
     if (!response.ok) throw new Error(String(response.status));
     return (await response.json()).items;
-  } catch {
+  } catch (error) {
+    if (!allowDemoFallback) throw error;
     return fallbackPackages.filter((item) => `${item.name} ${item.description} ${item.topics.join(" ")}`.toLowerCase().includes(q.toLowerCase()));
   }
 }
 
 export async function getPackage(name: string): Promise<PackageDetail | null> {
   try {
-    const response = await fetch(`${serverApi}/v1/packages/${name}`, { next: { revalidate: 30 } });
+    const response = await fetch(`${serverApi}/v1/packages/${name}`, { cache: "no-store" });
     return response.ok ? response.json() : null;
-  } catch { return name === fallbackDetail.package.name ? fallbackDetail : null; }
+  } catch (error) {
+    if (!allowDemoFallback) throw error;
+    return name === fallbackDetail.package.name ? fallbackDetail : null;
+  }
 }
 
 const fallbackPackages: PackageSummary[] = [

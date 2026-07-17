@@ -1,17 +1,20 @@
 import type { PackageFile, PackageSummary } from "@private-pub/contracts";
 import { createHash, randomUUID } from "node:crypto";
 import { demoDetails, score } from "./demo-data.js";
-import type { ImportJobRecord, RegistryRepository, TokenRecord } from "./domain.js";
+import type { AccountRecord, ImportJobRecord, RegistryRepository, TokenRecord } from "./domain.js";
 import { parsePackageArchive } from "./archive.js";
 import semver from "semver";
 import { mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
 export class DemoRegistryRepository implements RegistryRepository {
+  readonly mode = "demo" as const;
   private readonly details = structuredClone(demoDetails);
   private readonly imports = new Map<string, ImportJobRecord>();
   private readonly tokens = new Map<string, TokenRecord>();
   private readonly archives = new Map<string, Buffer>();
+  private readonly accounts = new Map<string, AccountRecord>();
+  private readonly sessions = new Map<string, { accountId: string; expiresAt: string }>();
 
   constructor(private readonly storageDirectory?: string) {}
 
@@ -26,6 +29,8 @@ export class DemoRegistryRepository implements RegistryRepository {
       this.registerParsedArchive(parsed, archive);
     }
   }
+
+  async close() {}
 
   async search(query: string, filters: { sdk?: string; platform?: string; publisher?: string; hasPreview?: boolean; sort?: string }) {
     const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
@@ -71,8 +76,22 @@ export class DemoRegistryRepository implements RegistryRepository {
   }
   async getImport(id: string) { return structuredClone(this.imports.get(id) ?? null); }
   async listImports() { return structuredClone([...this.imports.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt))); }
+  async findAccountByUsername(username: string) { return structuredClone([...this.accounts.values()].find((item) => item.username === username) ?? null); }
+  async createSession(accountId: string, tokenHash: string, expiresAt: string) { this.sessions.set(tokenHash, { accountId, expiresAt }); }
+  async authenticateSession(tokenHash: string) {
+    const session = this.sessions.get(tokenHash);
+    if (!session || Date.parse(session.expiresAt) <= Date.now()) return null;
+    return structuredClone(this.accounts.get(session.accountId) ?? null);
+  }
+  async revokeSession(tokenHash: string) { this.sessions.delete(tokenHash); }
+  async updatePassword(accountId: string, passwordHash: string) { const account = this.accounts.get(accountId); if (account) { account.passwordHash = passwordHash; account.mustChangePassword = false; } }
+  async listTokens(accountId: string) { return [...this.tokens.values()].filter((item) => item.subjectId === accountId).map((item) => ({ id: item.id, name: item.name, prefix: item.prefix, scopes: item.scopes, expiresAt: item.expiresAt, lastUsedAt: null, revokedAt: item.revokedAt, createdAt: new Date().toISOString() })); }
   async saveToken(token: TokenRecord) { this.tokens.set(token.id, token); }
-  async revokeToken(id: string) { const token = this.tokens.get(id); if (!token) return false; token.revokedAt = new Date().toISOString(); return true; }
+  async authenticateToken(tokenHash: string) {
+    const token = [...this.tokens.values()].find((item) => item.tokenHash === tokenHash && !item.revokedAt && (!item.expiresAt || Date.parse(item.expiresAt) > Date.now()));
+    return token ? { id: token.id, scopes: token.scopes } : null;
+  }
+  async revokeToken(id: string, accountId: string) { const token = this.tokens.get(id); if (!token || token.subjectId !== accountId) return false; token.revokedAt = new Date().toISOString(); return true; }
   async publishArchive(archive: Buffer) {
     const parsed = await parsePackageArchive(archive);
     const existing = this.details.get(parsed.name);

@@ -7,7 +7,9 @@ import { readFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { DemoRegistryRepository } from "./repository.js";
+import { DemoRegistryRepository, hashToken } from "./repository.js";
+import { hashPassword, verifyPassword } from "./password.js";
+import { issueToken } from "./security.js";
 
 describe("registry API", () => {
   let app: FastifyInstance;
@@ -125,5 +127,32 @@ describe("archive validation", () => {
     expect(largeGeneratedFile.valid).toBe(true);
     const oversizedArchive = validateArchiveIndex([{ path: "assets/huge.bin", size: 257 * 1024 * 1024, type: "file" }]);
     expect(oversizedArchive.errors).toContain("Archive exceeds uncompressed size limit");
+  });
+});
+
+describe("password security", () => {
+  it("hashes with a unique salt and verifies without storing plaintext", async () => {
+    const first = await hashPassword("a-secure-password");
+    const second = await hashPassword("a-secure-password");
+    expect(first).not.toBe(second);
+    expect(first).not.toContain("a-secure-password");
+    expect(await verifyPassword("a-secure-password", first)).toBe(true);
+    expect(await verifyPassword("wrong-password", first)).toBe(false);
+  });
+});
+
+describe("personal access tokens", () => {
+  it("allows an account token without an expiration date", async () => {
+    const previousPepper = process.env.TOKEN_PEPPER;
+    process.env.TOKEN_PEPPER = "test-pepper";
+    try {
+      const repository = new DemoRegistryRepository();
+      const created = await issueToken(repository, { name: "long-lived", scopes: ["packages:read"], expiresInDays: null }, "account-1");
+      expect(created.expiresAt).toBeNull();
+      await expect(repository.authenticateToken(hashToken(created.token, "test-pepper"))).resolves.toEqual({ id: created.id, scopes: ["packages:read"] });
+    } finally {
+      if (previousPepper === undefined) delete process.env.TOKEN_PEPPER;
+      else process.env.TOKEN_PEPPER = previousPepper;
+    }
   });
 });

@@ -11,7 +11,7 @@ The repository runs immediately in demo mode with deterministic data. PostgreSQL
 - Fastify API with separate `/api/packages/...` and `/v1/...` surfaces.
 - Hosted Pub V2 package/version metadata, archive URL resolution, upload negotiation, upload adapter endpoint, and finalization endpoint.
 - Control-plane routes for search, packages, files, scores, imports, analyses, PATs, retract/restore, and discontinue/undiscontinue.
-- Scoped bearer-token middleware, one-time PAT plaintext response, SHA-256 token hashing with a server-side pepper, rate limits, CSP, and security headers.
+- Database-backed accounts, HttpOnly login sessions, account-owned PATs, one-time PAT plaintext response, secret hashing with a server-side pepper, rate limits, CSP, and security headers.
 - Archive index validator for traversal, duplicate paths, oversized files, and unsafe symlink targets.
 - Configurable worker pipeline with `pana`, `dart analyze`, `flutter analyze`, and `dartdoc` command steps plus a zero-SDK mock mode.
 - Prisma schema covering packages, versions, files, dependencies, analysis, scores, publishers, permissions, tokens, imports, search documents, and audit logs.
@@ -64,7 +64,7 @@ PostgreSQL is exposed on `5432`, Valkey on `6379`, MinIO on `9000`, and the MinI
 
 ## Database
 
-The database schema is PostgreSQL-only and is defined in [packages/database/prisma/schema.prisma](packages/database/prisma/schema.prisma). It contains package, version, archive metadata, file index, dependency, publisher, permission, token, import, analysis, score, search, and audit tables.
+The database schema is PostgreSQL-only and is defined in [packages/database/prisma/schema.prisma](packages/database/prisma/schema.prisma). It contains account, session, account-owned token, package, version, archive metadata, file index, dependency, publisher, permission, import, analysis, score, search, and audit tables.
 
 ### Local PostgreSQL bootstrap
 
@@ -157,19 +157,37 @@ docker compose down --volumes
 
 ### Current application persistence mode
 
-The API currently uses `DemoRegistryRepository`, so published archives are stored locally under `DEMO_STORAGE_DIR` and not in PostgreSQL yet. PostgreSQL tables, Prisma Client, migrations, and seed data are ready; implementing `PrismaRegistryRepository` behind the existing `RegistryRepository` interface is the remaining step to make publish/search/control-plane data use SQL in production. Search can then combine PostgreSQL full-text vectors with `pg_trgm` similarity.
+Set `DEMO_MODE=false` to make the API use `PrismaRegistryRepository`. Package metadata, versions, dependencies, file indexes, scores, imports, API tokens, retractions, and discontinue state are then read from and written to PostgreSQL. Archive binaries and text previews remain in `ARCHIVE_STORAGE_DIR`; the S3 adapter is still a separate production-hardening step.
+
+The API and Web both load the monorepo root `.env` during local development. After changing `DEMO_MODE`, restart both processes and verify the active repository:
+
+```bash
+curl http://localhost:4000/health
+```
+
+The response must contain `"mode":"database"`. In database mode the Web app does not use its built-in demo fallback, so an unavailable API is surfaced as an error instead of showing local sample packages.
+
+### Tài khoản quản trị và token
+
+Khi chạy ở database mode và bảng `accounts` chưa có dữ liệu, API tự tạo tài khoản quyền cao nhất với thông tin mặc định:
+
+```text
+username: admin
+password: admin
+```
+
+Mở `http://localhost:3000/login`, đăng nhập và đổi mật khẩu ngay. Tài khoản mặc định có cờ `must_change_password`, vì vậy API từ chối tạo/quản lý token và các thao tác ghi cho tới khi mật khẩu được đổi. Có thể thay thông tin bootstrap lần đầu bằng `DEFAULT_ADMIN_USERNAME` và `DEFAULT_ADMIN_PASSWORD`; các biến này không ghi đè tài khoản đã tồn tại.
+
+Session đăng nhập được lưu ở cookie HttpOnly, `SameSite=Lax`, có thời hạn theo `SESSION_TTL_HOURS`. Đặt `COOKIE_SECURE=true` khi cả Web và API được phục vụ qua HTTPS. PAT được gắn với `account_id`; trang Tokens chỉ liệt kê và cho thu hồi token thuộc tài khoản hiện tại. Mật khẩu, session và PAT không được lưu dạng rõ trong PostgreSQL.
 
 ## Dart CLI flow
 
-Create a PAT from the Tokens page or API, then add it to Dart:
+Đăng nhập Web, tạo PAT ở trang Tokens và copy giá trị đầy đủ ngay khi nó xuất hiện. Khi tạo token, có thể bật **Không hết hạn**; token đó chỉ mất hiệu lực khi bị thu hồi, tài khoản bị khóa/xóa, hoặc token pepper bị thay đổi. Sau đó thêm token vào Dart:
 
 ```bash
-curl -X POST http://localhost:4000/v1/tokens \
-  -H 'Authorization: Bearer demo-admin-token' \
-  -H 'Content-Type: application/json' \
-  -d '{"name":"local-cli","scopes":["packages:read","packages:publish"],"expiresInDays":30}'
-
 dart pub token add http://localhost:4000
+# Khi hiện "Enter secret token:", dán token pp_... rồi nhấn Enter.
+# Không nhập pp_... trực tiếp tại dấu nhắc zsh.
 ```
 
 Use either a repository declaration in `pubspec.yaml`:
@@ -199,6 +217,10 @@ GET  /api/packages/versions/newUploadFinish
 Control plane:
 
 ```text
+POST   /v1/auth/login
+GET    /v1/auth/me
+POST   /v1/auth/logout
+PATCH  /v1/auth/password
 GET    /v1/search
 GET    /v1/packages/:name
 GET    /v1/packages/:name/versions/:version
@@ -209,6 +231,7 @@ POST   /v1/imports/pubdev
 GET    /v1/imports/:jobId
 POST   /v1/analyses/recompute
 POST   /v1/tokens
+GET    /v1/tokens
 DELETE /v1/tokens/:id
 POST   /v1/packages/:name/versions/:version/retract
 POST   /v1/packages/:name/versions/:version/restore
@@ -230,11 +253,11 @@ The API suite covers Hosted Pub metadata, search ranking, retraction/restore, tr
 
 Before an internet-facing deployment:
 
-1. Implement `PrismaRegistryRepository`, transactional publish/version creation, semver latest selection, and audit writes.
-2. Implement `S3ArchiveStore` with short-lived signed upload/download URLs, immutable object keys, and verified SHA-256 checksums.
+1. Move local archive/text-preview storage from `ARCHIVE_STORAGE_DIR` to an `S3ArchiveStore` with short-lived signed upload/download URLs and immutable object keys.
+2. Add database-backed publisher ownership checks and per-package authorization to every administrative mutation.
 3. Parse and index `.tar.gz` archives in an isolated runner with compressed/uncompressed limits, entry limits, timeouts, no network, read-only root filesystem, and constrained CPU/memory.
 4. Connect a durable queue (Valkey/BullMQ, Temporal, or a cloud queue), idempotency keys, retries, poison-job handling, and worker leases.
-5. Replace demo auth with OIDC/JWKS verification and database-backed PAT validation; rotate the token pepper and add secret-manager integration.
+5. Add optional OIDC/JWKS/SSO integration, account lifecycle administration, MFA, recovery codes, token-pepper rotation, and secret-manager integration.
 6. Run real `pana`/Dart/Flutter tools in pinned container images and persist logs/findings. Add ClamAV or a supply-chain scanner behind `malware-scan`.
 7. Add signed provenance/SBOM verification, dependency-policy gates, domain verification for publishers, and approval workflows.
 8. Add Playwright E2E tests, real `dart pub get/publish` contract tests, load tests, metrics/traces, backups, disaster-recovery drills, and CDN cache rules.

@@ -5,8 +5,10 @@ import rateLimit from "@fastify/rate-limit";
 import swagger from "@fastify/swagger";
 import swaggerUi from "@fastify/swagger-ui";
 import multipart from "@fastify/multipart";
+import cookie from "@fastify/cookie";
 import { ZodError } from "zod";
 import { DemoRegistryRepository } from "./repository.js";
+import { PrismaRegistryRepository } from "./prisma-repository.js";
 import { registerRoutes } from "./routes.js";
 
 export async function buildApp() {
@@ -15,6 +17,7 @@ export async function buildApp() {
   await app.register(cors, { origin: true });
   await app.register(helmet, { contentSecurityPolicy: false });
   await app.register(rateLimit, { max: 120, timeWindow: "1 minute" });
+  await app.register(cookie);
   await app.register(multipart, {
     limits: { files: 1, fileSize: maxArchiveBytes, fields: 20 }
   });
@@ -28,8 +31,12 @@ export async function buildApp() {
     const statusCode = typeof candidate.statusCode === "number" ? candidate.statusCode : 500;
     return reply.code(statusCode).send({ error: statusCode === 500 ? "internal_error" : normalized.name, message: normalized.message });
   });
-  const repository = new DemoRegistryRepository(process.env.NODE_ENV === "test" ? undefined : process.env.DEMO_STORAGE_DIR ?? ".private-pub-data/archives");
+  const storageDirectory = process.env.ARCHIVE_STORAGE_DIR ?? process.env.DEMO_STORAGE_DIR ?? ".private-pub-data/archives";
+  const repository = process.env.DEMO_MODE === "false" && process.env.NODE_ENV !== "test"
+    ? new PrismaRegistryRepository(storageDirectory)
+    : new DemoRegistryRepository(process.env.NODE_ENV === "test" ? undefined : storageDirectory);
   await repository.initialize();
+  app.addHook("onClose", async () => repository.close?.());
   await registerRoutes(app, repository);
   return app;
 }

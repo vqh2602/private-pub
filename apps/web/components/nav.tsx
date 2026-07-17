@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Box, Menu, Moon, Search, ShieldCheck, Sun, X } from "lucide-react";
+import { Box, KeyRound, Menu, Moon, Search, ShieldCheck, Sun, X } from "lucide-react";
 import { useEffect, useState } from "react";
 
 export function Nav() {
@@ -20,7 +20,7 @@ export function Nav() {
       </nav>
       <div className="nav-actions">
         <button className="icon-button" aria-label="Toggle color scheme" onClick={toggleTheme}>{dark ? <Sun size={17} /> : <Moon size={17} />}</button>
-        <Link href="/tokens" className="profile"><span>VH</span><div><strong>Vuong Huy</strong><small>System admin</small></div></Link>
+        <Link href="/tokens" className="profile"><span><KeyRound size={15} /></span><div><strong>Tài khoản</strong><small>Đăng nhập &amp; token</small></div></Link>
         <button className="menu-button" onClick={() => setOpen(!open)} aria-label="Toggle menu">{open ? <X /> : <Menu />}</button>
       </div>
     </div>

@@ -103,6 +103,6 @@ export type ImportRequest = z.infer<typeof importRequestSchema>;
 export const tokenRequestSchema = z.object({
   name: z.string().min(2).max(80),
   scopes: z.array(z.enum(["packages:read", "packages:publish", "packages:admin", "imports:write", "tokens:write"])).min(1),
-  expiresInDays: z.number().int().min(1).max(365).default(90)
+  expiresInDays: z.number().int().min(1).max(365).nullable().default(90)
 });
 export type TokenRequest = z.infer<typeof tokenRequestSchema>;
