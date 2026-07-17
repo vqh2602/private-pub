@@ -1,0 +1,289 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Visibility {
+  PRIVATE
+  INTERNAL
+  PUBLIC
+}
+
+enum SubjectType {
+  USER
+  GROUP
+  SERVICE_ACCOUNT
+}
+
+enum PackageRole {
+  PACKAGE_ADMIN
+  PACKAGE_WRITER
+  VIEWER
+}
+
+enum JobStatus {
+  QUEUED
+  RUNNING
+  FAILED
+  COMPLETED
+  PARTIAL
+}
+
+enum AnalysisStatus {
+  QUEUED
+  RUNNING
+  FAILED
+  COMPLETED
+  TIMED_OUT
+}
+
+enum PreviewStatus {
+  PENDING
+  READY
+  FAILED
+  UNSUPPORTED
+}
+
+enum DependencyScope {
+  DEPENDENCIES
+  DEV_DEPENDENCIES
+  DEPENDENCY_OVERRIDES
+}
+
+model Package {
+  id                   BigInt           @id @default(autoincrement())
+  name                 String           @unique
+  normalizedName       String           @unique @map("normalized_name")
+  description          String?
+  latestVersionId      BigInt?          @map("latest_version_id")
+  publisherId          BigInt?          @map("publisher_id")
+  isDiscontinued       Boolean          @default(false) @map("is_discontinued")
+  replacementPackageId BigInt?          @map("replacement_package_id")
+  visibility           Visibility       @default(PRIVATE)
+  topics               Json             @default("[]")
+  createdAt            DateTime         @default(now()) @map("created_at")
+  updatedAt            DateTime         @updatedAt @map("updated_at")
+  publisher            Publisher?       @relation(fields: [publisherId], references: [id])
+  versions             PackageVersion[]
+  permissions          PackagePermission[]
+  searchDocument       SearchDocument?
+
+  @@map("packages")
+}
+
+model PackageVersion {
+  id                   BigInt            @id @default(autoincrement())
+  packageId            BigInt            @map("package_id")
+  version              String
+  versionSortKey       String            @map("version_sort_key")
+  pubspecJson          Json              @map("pubspec_json")
+  readmeHtml           String?           @map("readme_html")
+  changelogHtml        String?           @map("changelog_html")
+  licenseExpression    String?           @map("license_expression")
+  archiveObjectKey     String            @map("archive_object_key")
+  archiveSha256        String            @map("archive_sha256")
+  publishedAt          DateTime          @map("published_at")
+  retractedAt          DateTime?         @map("retracted_at")
+  isPrerelease         Boolean           @default(false) @map("is_prerelease")
+  sourceType           String            @default("native") @map("source_type")
+  sourceUrl            String?           @map("source_url")
+  importProvenanceJson Json?              @map("import_provenance_json")
+  package              Package           @relation(fields: [packageId], references: [id], onDelete: Cascade)
+  files                PackageFile[]
+  dependencies         Dependency[]
+  analysisRuns         AnalysisRun[]
+  scores               Score[]
+  searchDocuments      SearchDocument[]
+
+  @@unique([packageId, version])
+  @@index([packageId, versionSortKey(sort: Desc)])
+  @@map("package_versions")
+}
+
+model PackageFile {
+  id               BigInt        @id @default(autoincrement())
+  packageVersionId BigInt        @map("package_version_id")
+  path             String
+  kind             String
+  sizeBytes        BigInt        @map("size_bytes")
+  mimeType         String?       @map("mime_type")
+  sha256           String
+  storageKey       String        @map("storage_key")
+  isText           Boolean       @default(false) @map("is_text")
+  language         String?
+  previewStatus    PreviewStatus @default(PENDING) @map("preview_status")
+  sortOrder        Int           @default(0) @map("sort_order")
+  version          PackageVersion @relation(fields: [packageVersionId], references: [id], onDelete: Cascade)
+
+  @@unique([packageVersionId, path])
+  @@index([packageVersionId, path])
+  @@map("package_files")
+}
+
+model Dependency {
+  id               BigInt          @id @default(autoincrement())
+  packageVersionId BigInt          @map("package_version_id")
+  scope            DependencyScope
+  name             String
+  sourceKind       String          @map("source_kind")
+  hostedUrl        String?         @map("hosted_url")
+  constraintRaw    String          @map("constraint_raw")
+  isDirect         Boolean         @default(true) @map("is_direct")
+  version          PackageVersion  @relation(fields: [packageVersionId], references: [id], onDelete: Cascade)
+
+  @@index([packageVersionId, scope])
+  @@map("dependencies")
+}
+
+model AnalysisRun {
+  id                BigInt          @id @default(autoincrement())
+  packageVersionId  BigInt          @map("package_version_id")
+  status            AnalysisStatus  @default(QUEUED)
+  runnerImage       String?         @map("runner_image")
+  dartSdkVersion    String?         @map("dart_sdk_version")
+  flutterSdkVersion String?         @map("flutter_sdk_version")
+  panaVersion       String?         @map("pana_version")
+  startedAt         DateTime?       @map("started_at")
+  endedAt           DateTime?       @map("ended_at")
+  logObjectKey      String?         @map("log_object_key")
+  sandboxType       String?         @map("sandbox_type")
+  version           PackageVersion  @relation(fields: [packageVersionId], references: [id], onDelete: Cascade)
+  findings          AnalysisFinding[]
+
+  @@map("analysis_runs")
+}
+
+model AnalysisFinding {
+  id            BigInt      @id @default(autoincrement())
+  analysisRunId BigInt      @map("analysis_run_id")
+  category      String
+  severity      String
+  code          String?
+  title         String
+  message       String
+  filePath      String?     @map("file_path")
+  line          Int?
+  column        Int?
+  rawJson       Json?       @map("raw_json")
+  run           AnalysisRun @relation(fields: [analysisRunId], references: [id], onDelete: Cascade)
+
+  @@map("analysis_findings")
+}
+
+model Score {
+  id                 BigInt         @id @default(autoincrement())
+  packageVersionId   BigInt         @map("package_version_id")
+  grantedPoints      Int            @map("granted_points")
+  maxPoints          Int            @map("max_points")
+  likeCount          Int            @default(0) @map("like_count")
+  downloadCount30d   Int            @default(0) @map("download_count_30d")
+  qualityScore       Float          @map("quality_score")
+  popularityScore    Float          @map("popularity_score")
+  maintenanceScore   Float          @map("maintenance_score")
+  tagsJson           Json           @map("tags_json")
+  weightsJson        Json           @map("weights_json")
+  breakdownJson      Json           @map("breakdown_json")
+  computedAt         DateTime       @default(now()) @map("computed_at")
+  version            PackageVersion @relation(fields: [packageVersionId], references: [id], onDelete: Cascade)
+
+  @@index([packageVersionId, computedAt(sort: Desc)])
+  @@map("scores")
+}
+
+model Publisher {
+  id                 BigInt      @id @default(autoincrement())
+  publisherId        String      @unique @map("publisher_id")
+  displayName        String      @map("display_name")
+  contactEmail       String?     @map("contact_email")
+  verificationMethod String?     @map("verification_method")
+  domain             String?
+  verifiedAt         DateTime?   @map("verified_at")
+  metadataJson       Json?       @map("metadata_json")
+  packages           Package[]
+
+  @@map("publishers")
+}
+
+model PackagePermission {
+  id          BigInt      @id @default(autoincrement())
+  packageId   BigInt      @map("package_id")
+  subjectType SubjectType @map("subject_type")
+  subjectId   String      @map("subject_id")
+  role        PackageRole
+  grantedAt   DateTime    @default(now()) @map("granted_at")
+  grantedBy   String      @map("granted_by")
+  package     Package     @relation(fields: [packageId], references: [id], onDelete: Cascade)
+
+  @@unique([packageId, subjectType, subjectId])
+  @@map("package_permissions")
+}
+
+model ApiToken {
+  id         BigInt    @id @default(autoincrement())
+  subjectId  String    @map("subject_id")
+  name       String
+  tokenHash  String    @unique @map("token_hash")
+  prefix     String
+  scopesJson Json      @map("scopes_json")
+  expiresAt  DateTime? @map("expires_at")
+  lastUsedAt DateTime? @map("last_used_at")
+  revokedAt  DateTime? @map("revoked_at")
+  createdAt  DateTime  @default(now()) @map("created_at")
+
+  @@index([subjectId, revokedAt])
+  @@map("api_tokens")
+}
+
+model ImportJob {
+  id                    String    @id @default(cuid())
+  sourceRegistry        String    @map("source_registry")
+  packageName           String    @map("package_name")
+  mode                  String
+  status                JobStatus @default(QUEUED)
+  requestedVersionsJson Json      @map("requested_versions_json")
+  startedAt             DateTime? @map("started_at")
+  endedAt               DateTime? @map("ended_at")
+  summaryJson           Json?     @map("summary_json")
+  createdAt             DateTime  @default(now()) @map("created_at")
+
+  @@map("import_jobs")
+}
+
+model SearchDocument {
+  id                   BigInt          @id @default(autoincrement())
+  packageId            BigInt          @unique @map("package_id")
+  packageVersionId     BigInt          @map("package_version_id")
+  name                 String
+  description          String?
+  readmeExcerpt        String?         @map("readme_excerpt")
+  topicsJson           Json            @map("topics_json")
+  publisherIdentifier  String?         @map("publisher_id")
+  platformsJson        Json            @map("platforms_json")
+  tagsJson             Json            @map("tags_json")
+  rankingFeaturesJson  Json            @map("ranking_features_json")
+  updatedAt            DateTime        @updatedAt @map("updated_at")
+  package              Package         @relation(fields: [packageId], references: [id], onDelete: Cascade)
+  version              PackageVersion  @relation(fields: [packageVersionId], references: [id], onDelete: Cascade)
+
+  @@index([name])
+  @@map("search_documents")
+}
+
+model AuditLog {
+  id          BigInt      @id @default(autoincrement())
+  subjectType String      @map("subject_type")
+  subjectId   String      @map("subject_id")
+  actorId     String      @map("actor_id")
+  action      String
+  ip          String?
+  userAgent   String?     @map("user_agent")
+  payloadJson Json?       @map("payload_json")
+  createdAt   DateTime    @default(now()) @map("created_at")
+
+  @@index([subjectType, subjectId, createdAt(sort: Desc)])
+  @@map("audit_logs")
+}

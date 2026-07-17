@@ -1,0 +1,18 @@
+{
+  "name": "@private-pub/database",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "prisma generate",
+    "lint": "DATABASE_URL=postgresql://private_pub:private_pub@localhost:5432/private_pub prisma validate",
+    "test": "vitest run --passWithNoTests",
+    "typecheck": "DATABASE_URL=postgresql://private_pub:private_pub@localhost:5432/private_pub prisma validate",
+    "db:generate": "prisma generate",
+    "db:migrate": "prisma migrate dev",
+    "db:seed": "tsx prisma/seed.ts"
+  },
+  "dependencies": { "@prisma/client": "^6.10.1" },
+  "devDependencies": { "prisma": "^6.10.1", "tsx": "^4.20.3", "vitest": "^3.2.4" },
+  "prisma": { "seed": "tsx prisma/seed.ts" }
+}
