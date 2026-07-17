@@ -2173,6 +2173,7 @@ td svg {
 .account-access-card .primary-button {
   width: max-content;
   margin-top: 16px;
+  color: white;
 }
 .flutter-heading {
   display: flex;
