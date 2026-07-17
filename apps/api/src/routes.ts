@@ -137,6 +137,18 @@ export async function registerRoutes(app: FastifyInstance, repository: RegistryR
     return { items: packages.slice((query.page - 1) * query.limit, query.page * query.limit), total: packages.length, page: query.page, limit: query.limit };
   });
 
+  app.get("/v1/packages/mine", { preHandler: scopes("packages:read") }, async (request) => {
+    const identities = new Set([request.actor!.id, request.actor!.username].filter((value): value is string => Boolean(value)));
+    const packages = await repository.search("", {});
+    const items = (await Promise.all(packages.map(async (item) => {
+      const detail = await repository.getPackage(item.name);
+      if (!detail) return null;
+      const versions = detail.versions.filter((version) => version.publishedBy !== null && identities.has(version.publishedBy));
+      return versions.length ? { package: item, versions } : null;
+    }))).filter((item): item is NonNullable<typeof item> => item !== null);
+    return { items };
+  });
+
   app.get("/v1/packages/:name", async (request, reply) => {
     const { name } = nameParams.parse(request.params);
     const detail = await repository.getPackage(name);

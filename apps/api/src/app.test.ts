@@ -139,6 +139,12 @@ describe("registry API", () => {
     expect(published.json().latest.version).toBe("1.0.0");
     expect(published.json().latest).toEqual(published.json().versions[0]);
     expect(published.json().latest.pubspec.environment.sdk).toBe(">=3.4.0 <4.0.0");
+    const mine = await app.inject({ method: "GET", url: "/v1/packages/mine", headers: { authorization: "Bearer demo-admin-token" } });
+    expect(mine.statusCode).toBe(200);
+    expect(mine.json().items).toContainEqual(expect.objectContaining({
+      package: expect.objectContaining({ name: "sample_package" }),
+      versions: expect.arrayContaining([expect.objectContaining({ version: "1.0.0", publishedBy: "admin" })])
+    }));
     const downloaded = await app.inject({ method: "GET", url: "/api/packages/sample_package/versions/1.0.0.tar.gz" });
     expect(downloaded.statusCode).toBe(200);
     expect(downloaded.rawPayload.equals(archive)).toBe(true);
