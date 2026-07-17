@@ -5,9 +5,10 @@ against a private Hosted Pub Repository. It works with registries that implement
 the Hosted Pub Repository API V2, including Unpub and Constellation.
 
 The `outdated` and `upgrade` commands delegate dependency resolution to the
-installed Dart or Flutter SDK. When a host is configured globally, the CLI
-supplies `PUB_HOSTED_URL`; when a private host is declared on an individual
-dependency, that declaration is preserved. Lockfiles, Pub workspaces,
+installed Dart or Flutter SDK. They deliberately do **not** forward a global
+`PUB_HOSTED_URL`: Pub has no fallback from a private host to pub.dev, so a
+global value would make public dependencies fail resolution. Declare the
+private host on each private dependency instead. Lockfiles, Pub workspaces,
 authentication configured with `dart pub token`, and the Pub version solver
 therefore keep their standard behavior.
 
@@ -25,7 +26,8 @@ dart pub global activate --source path .
 
 ## Configure
 
-Set a registry for the shell:
+Set a registry for private metadata commands (`check`, `versions`, and
+`compare`):
 
 ```bash
 export PUB_HOSTED_URL=https://pub.company.dev
@@ -35,6 +37,17 @@ Alternatively, pass `--host` before the command:
 
 ```bash
 private_pub --host https://pub.company.dev check
+```
+
+For a project that uses both pub.dev and a private registry, pin the registry
+on every private package in `pubspec.yaml`:
+
+```yaml
+dependencies:
+  company_ui:
+    hosted: https://pub.company.dev
+    version: ^1.0.0
+  http: ^1.0.0 # resolved from pub.dev
 ```
 
 For a registry protected by a Dart Pub token, configure the SDK once:

@@ -321,26 +321,25 @@ final class PrivatePubCli {
 
   Future<int> _runPub(ArgResults global, List<String> arguments) async {
     final directory = _directory(global);
-    final host = _resolveHost(global, directory);
-    final hasConfiguredHost = _hasConfiguredHost(global);
     final requestedSdk = global['sdk'] as String;
     final executable = requestedSdk == 'auto'
         ? (_inspector.isFlutterProject(directory) ? 'flutter' : 'dart')
         : requestedSdk;
-    final registryContext = hasConfiguredHost
-        ? 'PUB_HOSTED_URL=$host '
-        : '(hosted URL inferred from pubspec) ';
-    _stderr.writeln(
-      'Running: $registryContext$executable ${arguments.join(' ')}',
-    );
+    final environment = Map<String, String>.from(_environment)
+      ..remove('PUB_HOSTED_URL');
+    _stderr.writeln('Running: $executable ${arguments.join(' ')}');
+    if (_hasConfiguredHost(global)) {
+      _stderr.writeln(
+        'Note: PUB_HOSTED_URL is not forwarded to Pub. Declare private '
+        'dependencies with `hosted:` in pubspec.yaml so public packages keep '
+        'using pub.dev.',
+      );
+    }
     final process = await Process.start(
       executable,
       arguments,
       workingDirectory: directory,
-      environment: {
-        ..._environment,
-        if (hasConfiguredHost) 'PUB_HOSTED_URL': host.toString(),
-      },
+      environment: environment,
       mode: ProcessStartMode.inheritStdio,
       runInShell: Platform.isWindows,
     );

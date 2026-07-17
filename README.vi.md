@@ -228,7 +228,14 @@ dependencies:
     version: ^2.3.1
 ```
 
-hoặc đặt `PUB_HOSTED_URL=http://localhost:4000` cho môi trường được kiểm soát. Ở demo mode, archive mới publish sẽ được parse, lập chỉ mục và lưu trong `DEMO_STORAGE_DIR` (mặc định `.private-pub-data/archives`) để vẫn khả dụng qua các lần khởi động lại API. Archive lịch sử được seed trả về `501` cho tới khi cấu hình `S3ArchiveStore`.
+Không nên đặt `PUB_HOSTED_URL` khi project dùng cả pub.dev và registry private:
+Pub không có fallback về pub.dev, nên các package công khai như `flutter_lints`
+cũng sẽ bị tìm ở registry private. `private_pub upgrade` và `private_pub
+outdated` không truyền biến này sang Pub; hãy dùng khai báo `hosted:` cho từng
+package private như ví dụ trên. Ở demo mode, archive mới publish sẽ được parse,
+lập chỉ mục và lưu trong `DEMO_STORAGE_DIR` (mặc định `.private-pub-data/archives`)
+để vẫn khả dụng qua các lần khởi động lại API. Archive lịch sử được seed trả về
+`501` cho tới khi cấu hình `S3ArchiveStore`.
 
 ## Tổng quan API
 
