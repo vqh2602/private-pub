@@ -61,6 +61,40 @@ export interface PublishActor {
   username?: string;
 }
 
+export interface PackageMetadata {
+  name: string;
+  isDiscontinued: boolean;
+  latestVersion: PackageVersion;
+  versions: PackageVersion[];
+}
+
+export interface PackageSearchFilters {
+  sdk?: string[];
+  platform?: string[];
+  publisher?: string;
+  hasPreview?: boolean;
+  verifiedPublisher?: boolean;
+  minScore?: number;
+  sort?: string;
+  page?: number;
+  limit?: number;
+}
+
+export interface PackageSearchResult {
+  items: PackageSummary[];
+  total: number;
+}
+
+export interface PublishedPackage {
+  package: PackageSummary;
+  versions: PackageVersion[];
+}
+
+export interface PackageDetailOptions {
+  includeVersions?: boolean;
+  includeFiles?: boolean;
+}
+
 export interface RegistryRepository {
   readonly mode: "demo" | "database";
   initialize(): Promise<void>;
@@ -68,17 +102,14 @@ export interface RegistryRepository {
   getStats(): Promise<RegistryStats>;
   search(
     query: string,
-    filters: {
-      sdk?: string[];
-      platform?: string[];
-      publisher?: string;
-      hasPreview?: boolean;
-      verifiedPublisher?: boolean;
-      minScore?: number;
-      sort?: string;
-    },
-  ): Promise<PackageSummary[]>;
-  getPackage(name: string): Promise<PackageDetail | null>;
+    filters: PackageSearchFilters,
+  ): Promise<PackageSearchResult>;
+  listPublishedPackages(identities: string[]): Promise<PublishedPackage[]>;
+  getPackageMetadata(name: string): Promise<PackageMetadata | null>;
+  getPackage(
+    name: string,
+    options?: PackageDetailOptions,
+  ): Promise<PackageDetail | null>;
   getVersion(name: string, version: string): Promise<PackageVersion | null>;
   getFiles(name: string, version: string): Promise<PackageFile[] | null>;
   getFile(

@@ -20,6 +20,14 @@ import { hashPassword, verifyPassword } from "./password.js";
 
 const nameParams = z.object({ name: z.string() });
 const versionParams = nameParams.extend({ version: z.string() });
+const queryBoolean = z.preprocess(
+  (value) => (value === "true" ? true : value === "false" ? false : value),
+  z.boolean(),
+);
+const packageDetailQuery = z.object({
+  includeVersions: queryBoolean.default(true),
+  includeFiles: queryBoolean.default(true),
+});
 const hostedContentType = "application/vnd.pub.v2+json; charset=utf-8";
 const loginSchema = z.object({
   username: z.string().trim().min(1).max(80),
@@ -193,13 +201,11 @@ export async function registerRoutes(
         return reply.code(403).send({ error: "admin_required" });
       const input = createAccountSchema.parse(request.body);
       if (request.actor!.role !== "super_admin" && input.role !== "user") {
-        return reply
-          .code(403)
-          .send({
-            error: "forbidden_role",
-            message:
-              "Only a super administrator can create administrator accounts.",
-          });
+        return reply.code(403).send({
+          error: "forbidden_role",
+          message:
+            "Only a super administrator can create administrator accounts.",
+        });
       }
       const account = await repository.createAccount({
         username: input.username,
@@ -208,12 +214,10 @@ export async function registerRoutes(
         mustChangePassword: true,
       });
       if (!account)
-        return reply
-          .code(409)
-          .send({
-            error: "username_exists",
-            message: "Username already exists.",
-          });
+        return reply.code(409).send({
+          error: "username_exists",
+          message: "Username already exists.",
+        });
       const { passwordHash: _passwordHash, ...safeAccount } = account;
       return reply.code(201).send({ user: safeAccount });
     },
@@ -222,8 +226,8 @@ export async function registerRoutes(
   // Hosted Pub Repository API V2 read surface.
   app.get("/api/packages/:name", async (request, reply) => {
     const { name } = nameParams.parse(request.params);
-    const detail = await repository.getPackage(name);
-    if (!detail)
+    const metadata = await repository.getPackageMetadata(name);
+    if (!metadata)
       return reply
         .code(404)
         .type(hostedContentType)
@@ -233,25 +237,25 @@ export async function registerRoutes(
             message: `Package ${name} was not found.`,
           },
         });
-    const versions = detail.versions.map((item) =>
+    const versions = metadata.versions.map((item) =>
       hostedVersion(request, name, item),
     );
     const latest =
-      versions.find((item) => item.version === detail.latestVersion.version) ??
-      versions[0];
+      versions.find(
+        (item) => item.version === metadata.latestVersion.version,
+      ) ?? versions[0];
     return reply.type(hostedContentType).send({
       name,
       latest,
       versions,
-      ...(detail.package.isDiscontinued ? { isDiscontinued: true } : {}),
+      ...(metadata.isDiscontinued ? { isDiscontinued: true } : {}),
     });
   });
 
   app.get("/api/packages/:name/versions/:version", async (request, reply) => {
     const { name, version } = versionParams.parse(request.params);
     const item = await repository.getVersion(name, version);
-    const detail = await repository.getPackage(name);
-    if (!item || !detail)
+    if (!item)
       return reply
         .code(404)
         .type(hostedContentType)
@@ -424,13 +428,10 @@ export async function registerRoutes(
 
   app.get("/v1/search", async (request) => {
     const query = searchQuerySchema.parse(request.query);
-    const packages = await repository.search(query.q, query);
+    const result = await repository.search(query.q, query);
     return {
-      items: packages.slice(
-        (query.page - 1) * query.limit,
-        query.page * query.limit,
-      ),
-      total: packages.length,
+      items: result.items,
+      total: result.total,
       page: query.page,
       limit: query.limit,
     };
@@ -445,28 +446,16 @@ export async function registerRoutes(
           (value): value is string => Boolean(value),
         ),
       );
-      const packages = await repository.search("", {});
-      const items = (
-        await Promise.all(
-          packages.map(async (item) => {
-            const detail = await repository.getPackage(item.name);
-            if (!detail) return null;
-            const versions = detail.versions.filter(
-              (version) =>
-                version.publishedBy !== null &&
-                identities.has(version.publishedBy),
-            );
-            return versions.length ? { package: item, versions } : null;
-          }),
-        )
-      ).filter((item): item is NonNullable<typeof item> => item !== null);
-      return { items };
+      return {
+        items: await repository.listPublishedPackages([...identities]),
+      };
     },
   );
 
   app.get("/v1/packages/:name", async (request, reply) => {
     const { name } = nameParams.parse(request.params);
-    const detail = await repository.getPackage(name);
+    const options = packageDetailQuery.parse(request.query);
+    const detail = await repository.getPackage(name, options);
     return (
       detail ??
       reply

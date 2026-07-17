@@ -22,6 +22,23 @@ CREATE TABLE "auth_sessions" (
   CONSTRAINT "auth_sessions_pkey" PRIMARY KEY ("id")
 );
 
+-- This migration was originally added after the registry tables, despite its
+-- timestamp sorting before them. Creating this one dependency idempotently
+-- keeps both fresh installs and already-applied migration histories valid.
+CREATE TABLE IF NOT EXISTS "api_tokens" (
+  "id" BIGSERIAL NOT NULL,
+  "subject_id" TEXT NOT NULL,
+  "name" TEXT NOT NULL,
+  "token_hash" TEXT NOT NULL,
+  "prefix" TEXT NOT NULL,
+  "scopes_json" JSONB NOT NULL,
+  "expires_at" TIMESTAMP(3),
+  "last_used_at" TIMESTAMP(3),
+  "revoked_at" TIMESTAMP(3),
+  "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT "api_tokens_pkey" PRIMARY KEY ("id")
+);
+
 ALTER TABLE "api_tokens" ADD COLUMN "account_id" TEXT;
 ALTER TABLE "api_tokens" ADD COLUMN "public_id" TEXT;
 UPDATE "api_tokens" SET "public_id" = md5(random()::text || clock_timestamp()::text || "id"::text);

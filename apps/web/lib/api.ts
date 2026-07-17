@@ -1,6 +1,15 @@
-import type { PackageDetail, PackageSummary, RegistryStats } from "@private-pub/contracts";
+import type {
+  PackageDetail,
+  PackageFile,
+  PackageSummary,
+  RegistryStats,
+  SearchResponse,
+} from "@private-pub/contracts";
 
-const serverApi = process.env.INTERNAL_API_URL ?? process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
+const serverApi =
+  process.env.INTERNAL_API_URL ??
+  process.env.NEXT_PUBLIC_API_URL ??
+  "http://localhost:4000";
 const allowDemoFallback = process.env.DEMO_MODE !== "false";
 
 export interface PackageFilters {
@@ -9,27 +18,70 @@ export interface PackageFilters {
   hasPreview?: boolean;
   verifiedPublisher?: boolean;
   minScore?: number;
+  publisher?: string;
 }
 
-export async function searchPackages(q = "", sort = "relevance", filters: PackageFilters = {}): Promise<PackageSummary[]> {
-  const query = new URLSearchParams({ q, sort });
+export async function searchPackages(
+  q = "",
+  sort = "relevance",
+  filters: PackageFilters = {},
+  page = 1,
+  limit = 20,
+): Promise<SearchResponse> {
+  const query = new URLSearchParams({
+    q,
+    sort,
+    page: String(page),
+    limit: String(limit),
+  });
   filters.sdk?.forEach((value) => query.append("sdk", value));
   filters.platform?.forEach((value) => query.append("platform", value));
-  if (filters.hasPreview !== undefined) query.set("hasPreview", String(filters.hasPreview));
-  if (filters.verifiedPublisher !== undefined) query.set("verifiedPublisher", String(filters.verifiedPublisher));
-  if (filters.minScore !== undefined) query.set("minScore", String(filters.minScore));
+  if (filters.hasPreview !== undefined)
+    query.set("hasPreview", String(filters.hasPreview));
+  if (filters.verifiedPublisher !== undefined)
+    query.set("verifiedPublisher", String(filters.verifiedPublisher));
+  if (filters.minScore !== undefined)
+    query.set("minScore", String(filters.minScore));
+  if (filters.publisher) query.set("publisher", filters.publisher);
   try {
     const response = await fetch(`${serverApi}/v1/search?${query}`, {
       cache: "no-store",
     });
     if (!response.ok) throw new Error(String(response.status));
-    return (await response.json()).items;
+    return response.json();
   } catch (error) {
     if (!allowDemoFallback) throw error;
-    return fallbackPackages.filter((item) => {
+    const items = fallbackPackages.filter((item) => {
       const sdk = item.topics.includes("flutter") ? "flutter" : "dart";
-      return `${item.name} ${item.description} ${item.topics.join(" ")}`.toLowerCase().includes(q.toLowerCase()) && (!filters.sdk?.length || filters.sdk.includes(sdk)) && (!filters.platform?.length || filters.platform.some((platform) => platform === "web" || platform === "desktop" || (sdk === "flutter" && ["android", "ios", "linux", "macos", "windows"].includes(platform)))) && (filters.hasPreview === undefined || item.hasPreview === filters.hasPreview) && (filters.verifiedPublisher === undefined || filters.verifiedPublisher) && (filters.minScore === undefined || item.score >= filters.minScore);
+      return (
+        `${item.name} ${item.description} ${item.topics.join(" ")}`
+          .toLowerCase()
+          .includes(q.toLowerCase()) &&
+        (!filters.sdk?.length || filters.sdk.includes(sdk)) &&
+        (!filters.platform?.length ||
+          filters.platform.some(
+            (platform) =>
+              platform === "web" ||
+              platform === "desktop" ||
+              (sdk === "flutter" &&
+                ["android", "ios", "linux", "macos", "windows"].includes(
+                  platform,
+                )),
+          )) &&
+        (filters.hasPreview === undefined ||
+          item.hasPreview === filters.hasPreview) &&
+        (filters.verifiedPublisher === undefined ||
+          filters.verifiedPublisher) &&
+        (filters.minScore === undefined || item.score >= filters.minScore) &&
+        (!filters.publisher || item.publisherId === filters.publisher)
+      );
     });
+    return {
+      items: items.slice((page - 1) * limit, page * limit),
+      total: items.length,
+      page,
+      limit,
+    };
   }
 }
 
@@ -50,15 +102,48 @@ export async function getRegistryStats(): Promise<RegistryStats> {
   }
 }
 
-export async function getPackage(name: string): Promise<PackageDetail | null> {
+export async function getPackage(
+  name: string,
+  options: { includeVersions?: boolean; includeFiles?: boolean } = {},
+): Promise<PackageDetail | null> {
+  const query = new URLSearchParams();
+  if (options.includeVersions !== undefined)
+    query.set("includeVersions", String(options.includeVersions));
+  if (options.includeFiles !== undefined)
+    query.set("includeFiles", String(options.includeFiles));
   try {
-    const response = await fetch(`${serverApi}/v1/packages/${name}`, {
-      cache: "no-store",
-    });
+    const response = await fetch(
+      `${serverApi}/v1/packages/${encodeURIComponent(name)}${query.size ? `?${query}` : ""}`,
+      { cache: "no-store" },
+    );
     return response.ok ? response.json() : null;
   } catch (error) {
     if (!allowDemoFallback) throw error;
-    return name === fallbackDetail.package.name ? fallbackDetail : null;
+    if (name !== fallbackDetail.package.name) return null;
+    return {
+      ...fallbackDetail,
+      versions:
+        options.includeVersions === false ? [] : fallbackDetail.versions,
+      files: options.includeFiles === false ? [] : fallbackDetail.files,
+    };
+  }
+}
+
+export async function getPackageFiles(
+  name: string,
+  version: string,
+): Promise<PackageFile[] | null> {
+  try {
+    const response = await fetch(
+      `${serverApi}/v1/packages/${encodeURIComponent(name)}/versions/${encodeURIComponent(version)}/files`,
+      { cache: "no-store" },
+    );
+    return response.ok ? response.json() : null;
+  } catch (error) {
+    if (!allowDemoFallback) throw error;
+    return name === fallbackDetail.package.name && version === v.version
+      ? fallbackDetail.files
+      : null;
   }
 }
 
@@ -103,7 +188,8 @@ const v = {
   publishedBy: "platform-team",
   sdk: { dart: ">=3.4.0 <4.0.0", flutter: ">=3.22.0" },
   platforms: ["android", "ios", "web", "linux", "macos", "windows"],
-  archiveSha256: "0a4cc3d8f1eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+  archiveSha256:
+    "0a4cc3d8f1eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
   retractedAt: null,
   prerelease: false,
   releaseChannel: "stable" as const,
@@ -168,7 +254,8 @@ const fallbackDetail: PackageDetail = {
       { label: "Static analysis", points: 39, max: 40, status: "pass" },
     ],
   },
-  readme: "# Aurora UI\n\nA calm, accessible design system for internal Flutter products.",
+  readme:
+    "# Aurora UI\n\nA calm, accessible design system for internal Flutter products.",
   changelog: "# Changelog\n\n## 2.3.1\n\nImproved focus states.",
   files: [
     {

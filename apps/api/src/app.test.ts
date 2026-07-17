@@ -68,6 +68,27 @@ describe("registry API", () => {
     });
     expect(response.json().items[0].name).toBe("aurora_ui");
   });
+  it("paginates package search without changing the total", async () => {
+    const first = await app.inject({
+      method: "GET",
+      url: "/v1/search?sort=updated&page=1&limit=2",
+    });
+    const second = await app.inject({
+      method: "GET",
+      url: "/v1/search?sort=updated&page=2&limit=2",
+    });
+    expect(first.statusCode).toBe(200);
+    expect(second.statusCode).toBe(200);
+    expect(first.json()).toMatchObject({ total: 4, page: 1, limit: 2 });
+    expect(second.json()).toMatchObject({ total: 4, page: 2, limit: 2 });
+    expect(first.json().items).toHaveLength(2);
+    expect(second.json().items).toHaveLength(2);
+    expect(
+      first.json().items.map((item: { name: string }) => item.name),
+    ).not.toEqual(
+      second.json().items.map((item: { name: string }) => item.name),
+    );
+  });
   it("returns live registry statistics", async () => {
     const response = await app.inject({ method: "GET", url: "/v1/stats" });
     expect(response.statusCode).toBe(200);
@@ -132,6 +153,14 @@ describe("registry API", () => {
     });
     expect(multipleSdk.statusCode).toBe(200);
     expect(multipleSdk.json().items).toHaveLength(3);
+
+    const withoutPreview = await app.inject({
+      method: "GET",
+      url: "/v1/search?hasPreview=false",
+    });
+    expect(
+      withoutPreview.json().items.map((item: { name: string }) => item.name),
+    ).toEqual(["legacy_networking"]);
   });
   it("returns SDK requirements and direct dependencies", async () => {
     const response = await app.inject({
@@ -157,6 +186,16 @@ describe("registry API", () => {
         releaseChannel: "dev",
       }),
     );
+  });
+  it("can omit heavy version and file collections from package details", async () => {
+    const response = await app.inject({
+      method: "GET",
+      url: "/v1/packages/aurora_ui?includeVersions=false&includeFiles=false",
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json().latestVersion.version).toBe("2.3.1");
+    expect(response.json().versions).toEqual([]);
+    expect(response.json().files).toEqual([]);
   });
   it("imports a .tar.gz file, creates its package, and adds a new version", async () => {
     const isolated = await buildApp();

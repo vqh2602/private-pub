@@ -89,45 +89,48 @@ model AuthSession {
 }
 
 model Package {
-  id                   BigInt           @id @default(autoincrement())
-  name                 String           @unique
-  normalizedName       String           @unique @map("normalized_name")
+  id                   BigInt              @id @default(autoincrement())
+  name                 String              @unique
+  normalizedName       String              @unique @map("normalized_name")
   description          String?
-  latestVersionId      BigInt?          @map("latest_version_id")
-  publisherId          BigInt?          @map("publisher_id")
-  isDiscontinued       Boolean          @default(false) @map("is_discontinued")
-  replacementPackageId BigInt?          @map("replacement_package_id")
-  visibility           Visibility       @default(PRIVATE)
-  topics               Json             @default("[]")
-  createdAt            DateTime         @default(now()) @map("created_at")
-  updatedAt            DateTime         @updatedAt @map("updated_at")
-  publisher            Publisher?       @relation(fields: [publisherId], references: [id])
-  versions             PackageVersion[]
+  latestVersionId      BigInt?             @map("latest_version_id")
+  publisherId          BigInt?             @map("publisher_id")
+  isDiscontinued       Boolean             @default(false) @map("is_discontinued")
+  replacementPackageId BigInt?             @map("replacement_package_id")
+  visibility           Visibility          @default(PRIVATE)
+  topics               Json                @default("[]")
+  createdAt            DateTime            @default(now()) @map("created_at")
+  updatedAt            DateTime            @updatedAt @map("updated_at")
+  publisher            Publisher?          @relation(fields: [publisherId], references: [id])
+  latestVersion        PackageVersion?     @relation("LatestPackageVersion", fields: [latestVersionId], references: [id], onDelete: SetNull)
+  versions             PackageVersion[]    @relation("PackageVersions")
   permissions          PackagePermission[]
   searchDocument       SearchDocument?
 
+  @@index([latestVersionId])
   @@map("packages")
 }
 
 model PackageVersion {
-  id                   BigInt            @id @default(autoincrement())
-  packageId            BigInt            @map("package_id")
+  id                   BigInt           @id @default(autoincrement())
+  packageId            BigInt           @map("package_id")
   version              String
-  versionSortKey       String            @map("version_sort_key")
-  pubspecJson          Json              @map("pubspec_json")
-  readmeHtml           String?           @map("readme_html")
-  changelogHtml        String?           @map("changelog_html")
-  licenseExpression    String?           @map("license_expression")
-  archiveObjectKey     String            @map("archive_object_key")
-  archiveSha256        String            @map("archive_sha256")
-  publishedAt          DateTime          @map("published_at")
-  publishedBy          String?           @map("published_by")
-  retractedAt          DateTime?         @map("retracted_at")
-  isPrerelease         Boolean           @default(false) @map("is_prerelease")
-  sourceType           String            @default("native") @map("source_type")
-  sourceUrl            String?           @map("source_url")
-  importProvenanceJson Json?              @map("import_provenance_json")
-  package              Package           @relation(fields: [packageId], references: [id], onDelete: Cascade)
+  versionSortKey       String           @map("version_sort_key")
+  pubspecJson          Json             @map("pubspec_json")
+  readmeHtml           String?          @map("readme_html")
+  changelogHtml        String?          @map("changelog_html")
+  licenseExpression    String?          @map("license_expression")
+  archiveObjectKey     String           @map("archive_object_key")
+  archiveSha256        String           @map("archive_sha256")
+  publishedAt          DateTime         @map("published_at")
+  publishedBy          String?          @map("published_by")
+  retractedAt          DateTime?        @map("retracted_at")
+  isPrerelease         Boolean          @default(false) @map("is_prerelease")
+  sourceType           String           @default("native") @map("source_type")
+  sourceUrl            String?          @map("source_url")
+  importProvenanceJson Json?            @map("import_provenance_json")
+  package              Package          @relation("PackageVersions", fields: [packageId], references: [id], onDelete: Cascade)
+  latestForPackages    Package[]        @relation("LatestPackageVersion")
   files                PackageFile[]
   dependencies         Dependency[]
   analysisRuns         AnalysisRun[]
@@ -140,18 +143,18 @@ model PackageVersion {
 }
 
 model PackageFile {
-  id               BigInt        @id @default(autoincrement())
-  packageVersionId BigInt        @map("package_version_id")
+  id               BigInt         @id @default(autoincrement())
+  packageVersionId BigInt         @map("package_version_id")
   path             String
   kind             String
-  sizeBytes        BigInt        @map("size_bytes")
-  mimeType         String?       @map("mime_type")
+  sizeBytes        BigInt         @map("size_bytes")
+  mimeType         String?        @map("mime_type")
   sha256           String
-  storageKey       String        @map("storage_key")
-  isText           Boolean       @default(false) @map("is_text")
+  storageKey       String         @map("storage_key")
+  isText           Boolean        @default(false) @map("is_text")
   language         String?
-  previewStatus    PreviewStatus @default(PENDING) @map("preview_status")
-  sortOrder        Int           @default(0) @map("sort_order")
+  previewStatus    PreviewStatus  @default(PENDING) @map("preview_status")
+  sortOrder        Int            @default(0) @map("sort_order")
   version          PackageVersion @relation(fields: [packageVersionId], references: [id], onDelete: Cascade)
 
   @@unique([packageVersionId, path])
@@ -175,18 +178,18 @@ model Dependency {
 }
 
 model AnalysisRun {
-  id                BigInt          @id @default(autoincrement())
-  packageVersionId  BigInt          @map("package_version_id")
-  status            AnalysisStatus  @default(QUEUED)
-  runnerImage       String?         @map("runner_image")
-  dartSdkVersion    String?         @map("dart_sdk_version")
-  flutterSdkVersion String?         @map("flutter_sdk_version")
-  panaVersion       String?         @map("pana_version")
-  startedAt         DateTime?       @map("started_at")
-  endedAt           DateTime?       @map("ended_at")
-  logObjectKey      String?         @map("log_object_key")
-  sandboxType       String?         @map("sandbox_type")
-  version           PackageVersion  @relation(fields: [packageVersionId], references: [id], onDelete: Cascade)
+  id                BigInt            @id @default(autoincrement())
+  packageVersionId  BigInt            @map("package_version_id")
+  status            AnalysisStatus    @default(QUEUED)
+  runnerImage       String?           @map("runner_image")
+  dartSdkVersion    String?           @map("dart_sdk_version")
+  flutterSdkVersion String?           @map("flutter_sdk_version")
+  panaVersion       String?           @map("pana_version")
+  startedAt         DateTime?         @map("started_at")
+  endedAt           DateTime?         @map("ended_at")
+  logObjectKey      String?           @map("log_object_key")
+  sandboxType       String?           @map("sandbox_type")
+  version           PackageVersion    @relation(fields: [packageVersionId], references: [id], onDelete: Cascade)
   findings          AnalysisFinding[]
 
   @@map("analysis_runs")
@@ -222,22 +225,24 @@ model Score {
   tagsJson           Json           @map("tags_json")
   weightsJson        Json           @map("weights_json")
   breakdownJson      Json           @map("breakdown_json")
+  calculationVersion Int            @default(0) @map("calculation_version")
   computedAt         DateTime       @default(now()) @map("computed_at")
   version            PackageVersion @relation(fields: [packageVersionId], references: [id], onDelete: Cascade)
 
   @@index([packageVersionId, computedAt(sort: Desc)])
+  @@index([calculationVersion, packageVersionId])
   @@map("scores")
 }
 
 model Publisher {
-  id                 BigInt      @id @default(autoincrement())
-  publisherId        String      @unique @map("publisher_id")
-  displayName        String      @map("display_name")
-  contactEmail       String?     @map("contact_email")
-  verificationMethod String?     @map("verification_method")
+  id                 BigInt    @id @default(autoincrement())
+  publisherId        String    @unique @map("publisher_id")
+  displayName        String    @map("display_name")
+  contactEmail       String?   @map("contact_email")
+  verificationMethod String?   @map("verification_method")
   domain             String?
-  verifiedAt         DateTime?   @map("verified_at")
-  metadataJson       Json?       @map("metadata_json")
+  verifiedAt         DateTime? @map("verified_at")
+  metadataJson       Json?     @map("metadata_json")
   packages           Package[]
 
   @@map("publishers")
@@ -293,35 +298,44 @@ model ImportJob {
 }
 
 model SearchDocument {
-  id                   BigInt          @id @default(autoincrement())
-  packageId            BigInt          @unique @map("package_id")
-  packageVersionId     BigInt          @map("package_version_id")
-  name                 String
-  description          String?
-  readmeExcerpt        String?         @map("readme_excerpt")
-  topicsJson           Json            @map("topics_json")
-  publisherIdentifier  String?         @map("publisher_id")
-  platformsJson        Json            @map("platforms_json")
-  tagsJson             Json            @map("tags_json")
-  rankingFeaturesJson  Json            @map("ranking_features_json")
-  updatedAt            DateTime        @updatedAt @map("updated_at")
-  package              Package         @relation(fields: [packageId], references: [id], onDelete: Cascade)
-  version              PackageVersion  @relation(fields: [packageVersionId], references: [id], onDelete: Cascade)
+  id                  BigInt         @id @default(autoincrement())
+  packageId           BigInt         @unique @map("package_id")
+  packageVersionId    BigInt         @map("package_version_id")
+  name                String
+  description         String?
+  readmeExcerpt       String?        @map("readme_excerpt")
+  topicsJson          Json           @map("topics_json")
+  publisherIdentifier String?        @map("publisher_id")
+  platformsJson       Json           @map("platforms_json")
+  tagsJson            Json           @map("tags_json")
+  rankingFeaturesJson Json           @map("ranking_features_json")
+  sdkKind             String         @default("dart") @map("sdk_kind")
+  score               Int            @default(0)
+  downloads30d        Int            @default(0) @map("downloads_30d")
+  hasPreview          Boolean        @default(false) @map("has_preview")
+  updatedAt           DateTime       @updatedAt @map("updated_at")
+  package             Package        @relation(fields: [packageId], references: [id], onDelete: Cascade)
+  version             PackageVersion @relation(fields: [packageVersionId], references: [id], onDelete: Cascade)
 
   @@index([name])
+  @@index([publisherIdentifier])
+  @@index([sdkKind])
+  @@index([score(sort: Desc), name])
+  @@index([downloads30d(sort: Desc), name])
+  @@index([updatedAt(sort: Desc), name])
   @@map("search_documents")
 }
 
 model AuditLog {
-  id          BigInt      @id @default(autoincrement())
-  subjectType String      @map("subject_type")
-  subjectId   String      @map("subject_id")
-  actorId     String      @map("actor_id")
+  id          BigInt   @id @default(autoincrement())
+  subjectType String   @map("subject_type")
+  subjectId   String   @map("subject_id")
+  actorId     String   @map("actor_id")
   action      String
   ip          String?
-  userAgent   String?     @map("user_agent")
-  payloadJson Json?       @map("payload_json")
-  createdAt   DateTime    @default(now()) @map("created_at")
+  userAgent   String?  @map("user_agent")
+  payloadJson Json?    @map("payload_json")
+  createdAt   DateTime @default(now()) @map("created_at")
 
   @@index([subjectType, subjectId, createdAt(sort: Desc)])
   @@map("audit_logs")

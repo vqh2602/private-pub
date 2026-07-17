@@ -1,7 +1,14 @@
 import { PackageCard } from "@/components/package-card";
 import { getRegistryStats, searchPackages } from "@/lib/api";
 import { Badge } from "@private-pub/ui";
-import { Boxes, ChevronDown, PackageCheck, Search, ShieldCheck, Sparkles } from "lucide-react";
+import {
+  Boxes,
+  ChevronDown,
+  PackageCheck,
+  Search,
+  ShieldCheck,
+  Sparkles,
+} from "lucide-react";
 
 type HomeSearchParams = {
   q?: string;
@@ -11,14 +18,23 @@ type HomeSearchParams = {
   hasPreview?: string;
   verifiedPublisher?: string;
   minScore?: string;
+  page?: string;
 };
 
-const values = (value?: string | string[]) => (value === undefined ? [] : Array.isArray(value) ? value : [value]);
+const values = (value?: string | string[]) =>
+  value === undefined ? [] : Array.isArray(value) ? value : [value];
 
-export default async function Home({ searchParams }: { searchParams: Promise<HomeSearchParams> }) {
+export default async function Home({
+  searchParams,
+}: {
+  searchParams: Promise<HomeSearchParams>;
+}) {
   const params = await searchParams;
   const sdk = values(params.sdk);
   const platform = values(params.platform);
+  const requestedPage = Number(params.page ?? 1);
+  const page =
+    Number.isInteger(requestedPage) && requestedPage > 0 ? requestedPage : 1;
   const filters = {
     sdk,
     platform,
@@ -26,8 +42,18 @@ export default async function Home({ searchParams }: { searchParams: Promise<Hom
     ...(params.verifiedPublisher === "true" ? { verifiedPublisher: true } : {}),
     ...(params.minScore ? { minScore: Number(params.minScore) } : {}),
   };
-  const [items, stats] = await Promise.all([searchPackages(params.q ?? "", params.sort ?? "relevance", filters), getRegistryStats()]);
-  const analyzedPercent = stats.versions ? Math.round((stats.analyzedVersions / stats.versions) * 100) : 0;
+  const [searchResult, stats] = await Promise.all([
+    searchPackages(params.q ?? "", params.sort ?? "relevance", filters, page),
+    getRegistryStats(),
+  ]);
+  const items = searchResult.items;
+  const totalPages = Math.max(
+    1,
+    Math.ceil(searchResult.total / searchResult.limit),
+  );
+  const analyzedPercent = stats.versions
+    ? Math.round((stats.analyzedVersions / stats.versions) * 100)
+    : 0;
   return (
     <main>
       <section className="hero">
@@ -41,10 +67,18 @@ export default async function Home({ searchParams }: { searchParams: Promise<Hom
             <br />
             <em>None you don’t trust.</em>
           </h1>
-          <p>Discover, inspect, and ship private Dart & Flutter packages from one secure registry.</p>
+          <p>
+            Discover, inspect, and ship private Dart & Flutter packages from one
+            secure registry.
+          </p>
           <form className="hero-search">
             <Search size={20} />
-            <input name="q" defaultValue={params.q} aria-label="Search packages" placeholder="Search packages, publishers, or topics…" />
+            <input
+              name="q"
+              defaultValue={params.q}
+              aria-label="Search packages"
+              placeholder="Search packages, publishers, or topics…"
+            />
             <button>Search registry</button>
           </form>
           <div className="quick-filters">
@@ -84,11 +118,18 @@ export default async function Home({ searchParams }: { searchParams: Promise<Hom
         <div className="section-heading">
           <div>
             <span className="eyebrow">Registry catalogue</span>
-            <h2>{params.q ? `Results for “${params.q}”` : "Packages your team relies on"}</h2>
-            <p>{items.length} matching packages, ranked by quality and usage.</p>
+            <h2>
+              {params.q
+                ? `Results for “${params.q}”`
+                : "Packages your team relies on"}
+            </h2>
+            <p>
+              {searchResult.total} matching packages, ranked by quality and
+              usage.
+            </p>
           </div>
           <form className="sort-form">
-            <PreservedFilters params={params} omit="sort" />
+            <PreservedFilters params={params} omit={["sort", "page"]} />
             <label>Sort by</label>
             <div>
               <select name="sort" defaultValue={params.sort ?? "relevance"}>
@@ -105,10 +146,16 @@ export default async function Home({ searchParams }: { searchParams: Promise<Hom
         <div className="catalog-layout">
           <form className="filters">
             <input type="hidden" name="q" value={params.q ?? ""} />
-            <input type="hidden" name="sort" value={params.sort ?? "relevance"} />
+            <input
+              type="hidden"
+              name="sort"
+              value={params.sort ?? "relevance"}
+            />
             <div className="filter-head">
               <strong>Filters</strong>
-              <a href={params.q ? `/?q=${encodeURIComponent(params.q)}` : "/"}>Clear</a>
+              <a href={params.q ? `/?q=${encodeURIComponent(params.q)}` : "/"}>
+                Clear
+              </a>
             </div>
             <Filter
               title="SDK"
@@ -157,16 +204,35 @@ export default async function Home({ searchParams }: { searchParams: Promise<Hom
               Apply filters
             </button>
           </form>
-          <div className="package-list">
-            {items.map((item) => (
-              <PackageCard item={item} key={item.name} />
-            ))}
-            {items.length === 0 && (
-              <div className="empty-results">
-                <Search />
-                <h3>No matching packages</h3>
-                <p>Try a broader package name, topic, or publisher.</p>
-              </div>
+          <div>
+            <div className="package-list">
+              {items.map((item) => (
+                <PackageCard item={item} key={item.name} />
+              ))}
+              {items.length === 0 && (
+                <div className="empty-results">
+                  <Search />
+                  <h3>No matching packages</h3>
+                  <p>Try a broader package name, topic, or publisher.</p>
+                </div>
+              )}
+            </div>
+            {searchResult.total > searchResult.limit && (
+              <nav className="pagination" aria-label="Package results pages">
+                {page > 1 ? (
+                  <a href={searchHref(params, page - 1)}>← Previous</a>
+                ) : (
+                  <span />
+                )}
+                <span>
+                  Page {Math.min(page, totalPages)} / {totalPages}
+                </span>
+                {page < totalPages ? (
+                  <a href={searchHref(params, page + 1)}>Next →</a>
+                ) : (
+                  <span />
+                )}
+              </nav>
             )}
           </div>
         </div>
@@ -181,19 +247,66 @@ type FilterOption = {
   name?: string;
   checked?: boolean;
 };
-function Filter({ title, name, options, selected = [] }: { title: string; name?: string; options: FilterOption[]; selected?: string[] }) {
+function Filter({
+  title,
+  name,
+  options,
+  selected = [],
+}: {
+  title: string;
+  name?: string;
+  options: FilterOption[];
+  selected?: string[];
+}) {
   return (
     <fieldset>
       <legend>{title}</legend>
       {options.map((option) => (
         <label key={option.label}>
-          <input type="checkbox" name={option.name ?? name} value={option.value} defaultChecked={option.checked ?? selected.includes(option.value)} /> <span>{option.label}</span>
+          <input
+            type="checkbox"
+            name={option.name ?? name}
+            value={option.value}
+            defaultChecked={option.checked ?? selected.includes(option.value)}
+          />{" "}
+          <span>{option.label}</span>
         </label>
       ))}
     </fieldset>
   );
 }
 
-function PreservedFilters({ params, omit }: { params: HomeSearchParams; omit?: keyof HomeSearchParams }) {
-  return <>{Object.entries(params).flatMap(([name, raw]) => (name === omit || raw === undefined ? [] : values(raw).map((value) => <input key={`${name}-${value}`} type="hidden" name={name} value={value} />)))}</>;
+function PreservedFilters({
+  params,
+  omit = [],
+}: {
+  params: HomeSearchParams;
+  omit?: (keyof HomeSearchParams)[];
+}) {
+  return (
+    <>
+      {Object.entries(params).flatMap(([name, raw]) =>
+        omit.includes(name as keyof HomeSearchParams) || raw === undefined
+          ? []
+          : values(raw).map((value) => (
+              <input
+                key={`${name}-${value}`}
+                type="hidden"
+                name={name}
+                value={value}
+              />
+            )),
+      )}
+    </>
+  );
+}
+
+function searchHref(params: HomeSearchParams, page: number) {
+  const query = new URLSearchParams();
+  Object.entries(params).forEach(([name, raw]) => {
+    if (name !== "page")
+      values(raw).forEach((value) => query.append(name, value));
+  });
+  query.set("page", String(page));
+  return `/?${query}`;
 }

@@ -150,16 +150,20 @@ const queryArray = <T extends z.ZodTypeAny>(item: T) =>
       value === undefined ? [] : Array.isArray(value) ? value : [value],
     z.array(item),
   );
+const queryBoolean = z.preprocess(
+  (value) => (value === "true" ? true : value === "false" ? false : value),
+  z.boolean(),
+);
 
 export const searchQuerySchema = z.object({
   q: z.string().trim().max(200).default(""),
   sdk: queryArray(z.enum(["dart", "flutter"])),
   platform: queryArray(z.string().min(1).max(40)),
   publisher: z.string().optional(),
-  hasPreview: z.coerce.boolean().optional(),
-  verifiedPublisher: z.coerce.boolean().optional(),
+  hasPreview: queryBoolean.optional(),
+  verifiedPublisher: queryBoolean.optional(),
   minScore: z.coerce.number().int().min(0).max(160).optional(),
-  includeRetracted: z.coerce.boolean().default(false),
+  includeRetracted: queryBoolean.default(false),
   sort: z
     .enum(["relevance", "updated", "downloads", "score"])
     .default("relevance"),
@@ -167,6 +171,14 @@ export const searchQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(20),
 });
 export type SearchQuery = z.infer<typeof searchQuerySchema>;
+
+export const searchResponseSchema = z.object({
+  items: z.array(packageSummarySchema),
+  total: z.number().int().nonnegative(),
+  page: z.number().int().positive(),
+  limit: z.number().int().positive(),
+});
+export type SearchResponse = z.infer<typeof searchResponseSchema>;
 
 export const importRequestSchema = z.object({
   packageName: z.string().regex(/^[a-z][a-z0-9_]*$/),

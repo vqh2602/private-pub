@@ -24,6 +24,8 @@ import { parsePackageArchive, type ParsedPackageArchive } from "./archive.js";
 import type {
   AccountRecord,
   ImportJobRecord,
+  PackageDetailOptions,
+  PackageSearchFilters,
   PublishActor,
   RegistryRepository,
   TokenRecord,
@@ -39,9 +41,18 @@ import { releaseChannel, selectLatestRelease } from "./release-channel.js";
 type DatabasePackage = Prisma.PackageGetPayload<{
   include: {
     publisher: true;
-    versions: { include: { files: true; scores: true; dependencies: true } };
+    searchDocument: true;
+    latestVersion: {
+      include: { scores: true; dependencies: true };
+    };
   };
 }>;
+
+type DatabaseSearchDocument = Prisma.SearchDocumentGetPayload<{
+  include: { package: { include: { publisher: true } }; version: true };
+}>;
+
+const SCORE_CALCULATION_VERSION = 1;
 
 const emptyScore: Score = {
   grantedPoints: 0,
@@ -104,95 +115,138 @@ export class PrismaRegistryRepository implements RegistryRepository {
     return { packages, versions, analyzedVersions };
   }
 
-  async search(
-    query: string,
-    filters: {
-      sdk?: string[];
-      platform?: string[];
-      publisher?: string;
-      hasPreview?: boolean;
-      verifiedPublisher?: boolean;
-      minScore?: number;
-      sort?: string;
-    },
-  ) {
-    const packages = await this.prisma.package.findMany({
+  async search(query: string, filters: PackageSearchFilters) {
+    const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
+    const platforms = filters.platform?.flatMap((platform) =>
+      platform === "desktop" ? ["linux", "macos", "windows"] : [platform],
+    );
+    const and: Prisma.SearchDocumentWhereInput[] = terms.map((term) => ({
+      OR: [
+        { name: { contains: term, mode: "insensitive" } },
+        { description: { contains: term, mode: "insensitive" } },
+        { readmeExcerpt: { contains: term, mode: "insensitive" } },
+        { publisherIdentifier: { contains: term, mode: "insensitive" } },
+        { topicsJson: { array_contains: [term] } },
+      ],
+    }));
+    if (platforms?.length) {
+      and.push({
+        OR: platforms.map((platform) => ({
+          platformsJson: { array_contains: [platform] },
+        })),
+      });
+    }
+    if (filters.verifiedPublisher === true) {
+      and.push({
+        package: { publisher: { is: { verifiedAt: { not: null } } } },
+      });
+    } else if (filters.verifiedPublisher === false) {
+      and.push({
+        OR: [
+          { package: { publisher: { is: null } } },
+          { package: { publisher: { is: { verifiedAt: null } } } },
+        ],
+      });
+    }
+    const where: Prisma.SearchDocumentWhereInput = {
+      ...(and.length ? { AND: and } : {}),
+      ...(filters.publisher ? { publisherIdentifier: filters.publisher } : {}),
+      ...(filters.sdk?.length ? { sdkKind: { in: filters.sdk } } : {}),
+      ...(filters.hasPreview === undefined
+        ? {}
+        : { hasPreview: filters.hasPreview }),
+      ...(filters.minScore === undefined
+        ? {}
+        : { score: { gte: filters.minScore } }),
+    };
+    const sort = filters.sort ?? "relevance";
+    const orderBy: Prisma.SearchDocumentOrderByWithRelationInput[] =
+      sort === "updated"
+        ? [{ updatedAt: "desc" }, { name: "asc" }]
+        : sort === "downloads"
+          ? [{ downloads30d: "desc" }, { name: "asc" }]
+          : sort === "score"
+            ? [{ score: "desc" }, { name: "asc" }]
+            : [{ score: "desc" }, { downloads30d: "desc" }, { name: "asc" }];
+    const page = filters.page ?? 1;
+    const limit = filters.limit ?? 20;
+    const [documents, total] = await this.prisma.$transaction([
+      this.prisma.searchDocument.findMany({
+        where,
+        include: { package: { include: { publisher: true } }, version: true },
+        orderBy,
+        skip: (page - 1) * limit,
+        take: limit,
+      }),
+      this.prisma.searchDocument.count({ where }),
+    ]);
+    return {
+      items: documents.map((document) =>
+        this.summaryFromSearchDocument(document),
+      ),
+      total,
+    };
+  }
+
+  async listPublishedPackages(identities: string[]) {
+    if (!identities.length) return [];
+    const documents = await this.prisma.searchDocument.findMany({
       where: {
-        ...(query
-          ? {
-              OR: [
-                { name: { contains: query, mode: "insensitive" } },
-                { description: { contains: query, mode: "insensitive" } },
-              ],
-            }
-          : {}),
-        ...(filters.publisher
-          ? { publisher: { publisherId: filters.publisher } }
-          : {}),
+        package: { versions: { some: { publishedBy: { in: identities } } } },
       },
       include: {
-        publisher: true,
-        versions: {
+        version: true,
+        package: {
           include: {
-            files: true,
-            scores: { orderBy: { computedAt: "desc" }, take: 1 },
-            dependencies: true,
+            publisher: true,
+            versions: { where: { publishedBy: { in: identities } } },
           },
         },
       },
+      orderBy: { name: "asc" },
     });
-    let summaries = packages
-      .map((item) => this.summary(item))
-      .filter((item): item is PackageSummary => Boolean(item));
-    summaries = summaries.filter((summary) => {
-      const source = packages.find((item) => item.name === summary.name)!;
-      const latest = selectLatest(source.versions)!;
-      const pubspec = jsonRecord(latest.pubspecJson);
-      const isFlutter =
-        Boolean(jsonRecord(pubspec.dependencies).flutter) ||
-        Boolean(jsonRecord(pubspec.environment).flutter) ||
-        Boolean(pubspec.flutter);
-      const platforms = platformsFromPubspec(pubspec);
-      return (
-        (!filters.sdk?.length ||
-          filters.sdk.includes(isFlutter ? "flutter" : "dart")) &&
-        (!filters.platform?.length ||
-          filters.platform.some((platform) =>
-            platform === "desktop"
-              ? platforms.some((value) =>
-                  ["linux", "macos", "windows"].includes(value),
-                )
-              : platforms.includes(platform),
-          )) &&
-        (filters.hasPreview === undefined ||
-          summary.hasPreview === filters.hasPreview) &&
-        (filters.verifiedPublisher === undefined ||
-          Boolean(source.publisher?.verifiedAt) ===
-            filters.verifiedPublisher) &&
-        (filters.minScore === undefined || summary.score >= filters.minScore)
-      );
-    });
-    const sort = filters.sort ?? "relevance";
-    summaries.sort((a, b) =>
-      sort === "updated"
-        ? b.updatedAt.localeCompare(a.updatedAt)
-        : sort === "downloads"
-          ? b.downloads30d - a.downloads30d
-          : sort === "score"
-            ? b.score - a.score
-            : relevance(b, query) - relevance(a, query),
-    );
-    return summaries;
+    return documents.map((document) => ({
+      package: this.summaryFromSearchDocument(document),
+      versions: document.package.versions
+        .sort(compareDatabaseVersions)
+        .map(mapVersion),
+    }));
   }
 
-  async getPackage(name: string): Promise<PackageDetail | null> {
+  async getPackageMetadata(name: string) {
+    const item = await this.prisma.package.findUnique({
+      where: { name },
+      select: {
+        name: true,
+        isDiscontinued: true,
+        latestVersionId: true,
+        versions: true,
+      },
+    });
+    if (!item?.versions.length) return null;
+    const latest =
+      item.versions.find((version) => version.id === item.latestVersionId) ??
+      selectLatest(item.versions);
+    if (!latest) return null;
+    return {
+      name: item.name,
+      isDiscontinued: item.isDiscontinued,
+      latestVersion: mapVersion(latest),
+      versions: item.versions.sort(compareDatabaseVersions).map(mapVersion),
+    };
+  }
+
+  async getPackage(
+    name: string,
+    options: PackageDetailOptions = {},
+  ): Promise<PackageDetail | null> {
     const item = await this.prisma.package.findUnique({
       where: { name },
       include: {
         publisher: true,
-        versions: {
+        searchDocument: true,
+        latestVersion: {
           include: {
-            files: true,
             scores: { orderBy: { computedAt: "desc" }, take: 1 },
             dependencies: true,
           },
@@ -200,9 +254,26 @@ export class PrismaRegistryRepository implements RegistryRepository {
       },
     });
     if (!item) return null;
-    const latest = selectLatest(item.versions);
-    const summary = this.summary(item);
-    if (!latest || !summary) return null;
+    const latest = item.latestVersion;
+    if (!latest) return null;
+    const [versions, files] = await Promise.all([
+      options.includeVersions === false
+        ? Promise.resolve([])
+        : this.prisma.packageVersion.findMany({
+            where: { packageId: item.id },
+          }),
+      options.includeFiles === false
+        ? Promise.resolve([])
+        : this.prisma.packageFile.findMany({
+            where: { packageVersionId: latest.id },
+            orderBy: { sortOrder: "asc" },
+          }),
+    ]);
+    const summary = this.summary(
+      item,
+      latest,
+      item.searchDocument?.hasPreview ?? false,
+    );
     const pubspec = jsonRecord(latest.pubspecJson);
     const environment = jsonRecord(pubspec.environment);
     const dartConstraint = String(environment.sdk ?? "any");
@@ -215,7 +286,7 @@ export class PrismaRegistryRepository implements RegistryRepository {
     return {
       package: summary,
       latestVersion: mapVersion(latest),
-      versions: item.versions.sort(compareDatabaseVersions).map(mapVersion),
+      versions: versions.sort(compareDatabaseVersions).map(mapVersion),
       requirements: {
         dartSdkConstraint: dartConstraint,
         dartSdkMinimum: minimumVersion(dartConstraint),
@@ -239,11 +310,7 @@ export class PrismaRegistryRepository implements RegistryRepository {
       readme: latest.readmeHtml ?? `# ${item.name}`,
       changelog:
         latest.changelogHtml ?? "# Changelog\n\nNo changelog was included.",
-      files: await Promise.all(
-        latest.files
-          .sort((a, b) => a.sortOrder - b.sortOrder)
-          .map((file) => this.mapFile(file)),
-      ),
+      files: await Promise.all(files.map((file) => this.mapFile(file))),
     };
   }
 
@@ -282,14 +349,23 @@ export class PrismaRegistryRepository implements RegistryRepository {
   async setRetraction(name: string, version: string, retracted: boolean) {
     const item = await this.prisma.packageVersion.findFirst({
       where: { package: { name }, version },
-      select: { id: true },
+      select: { id: true, packageId: true },
     });
     if (!item) return null;
-    const updated = await this.prisma.packageVersion.update({
-      where: { id: item.id },
-      data: { retractedAt: retracted ? new Date() : null },
+    return this.prisma.$transaction(async (transaction) => {
+      const updated = await transaction.packageVersion.update({
+        where: { id: item.id },
+        data: { retractedAt: retracted ? new Date() : null },
+      });
+      const versions = await transaction.packageVersion.findMany({
+        where: { packageId: item.packageId },
+        select: { id: true, version: true, retractedAt: true },
+      });
+      const latest = selectLatestRelease(versions);
+      if (latest)
+        await this.refreshLatestPackage(transaction, item.packageId, latest.id);
+      return mapVersion(updated);
     });
-    return mapVersion(updated);
   }
 
   async setDiscontinued(name: string, discontinued: boolean) {
@@ -298,20 +374,14 @@ export class PrismaRegistryRepository implements RegistryRepository {
       data: { isDiscontinued: discontinued },
     });
     if (!result.count) return null;
-    const item = await this.prisma.package.findUnique({
-      where: { name },
-      include: {
-        publisher: true,
-        versions: {
-          include: {
-            files: true,
-            scores: { orderBy: { computedAt: "desc" }, take: 1 },
-            dependencies: true,
-          },
-        },
-      },
-    });
-    return item ? this.summary(item) : null;
+    return (
+      (
+        await this.getPackage(name, {
+          includeVersions: false,
+          includeFiles: false,
+        })
+      )?.package ?? null
+    );
   }
 
   async createImport(
@@ -585,7 +655,6 @@ export class PrismaRegistryRepository implements RegistryRepository {
   ) {
     const publishedAt = new Date();
     const topics = stringArray(parsed.pubspec.topics);
-    const platforms = platformsFromPubspec(parsed.pubspec);
     const calculatedScore = scoreParsedPackage(parsed);
     await this.prisma.$transaction(async (transaction) => {
       const publisher = await transaction.publisher.upsert({
@@ -599,8 +668,6 @@ export class PrismaRegistryRepository implements RegistryRepository {
       const packageRecord = await transaction.package.upsert({
         where: { name: parsed.name },
         update: {
-          description: parsed.description,
-          topics,
           publisherId: publisher.id,
         },
         create: {
@@ -651,41 +718,31 @@ export class PrismaRegistryRepository implements RegistryRepository {
           ...scoreData(calculatedScore),
         },
       });
-      const versions = await transaction.packageVersion.findMany({
-        where: { packageId: packageRecord.id },
-        select: { id: true, version: true, retractedAt: true },
-      });
-      const latest = selectLatestRelease(versions)!;
-      await transaction.package.update({
-        where: { id: packageRecord.id },
-        data: { latestVersionId: latest.id },
-      });
-      await transaction.searchDocument.upsert({
-        where: { packageId: packageRecord.id },
-        update: {
-          packageVersionId: latest.id,
-          name: parsed.name,
-          description: parsed.description,
-          readmeExcerpt: parsed.readme.slice(0, 500),
-          topicsJson: topics,
-          publisherIdentifier: publisher.publisherId,
-          platformsJson: platforms,
-          tagsJson: [],
-          rankingFeaturesJson: {},
-        },
-        create: {
-          packageId: packageRecord.id,
-          packageVersionId: latest.id,
-          name: parsed.name,
-          description: parsed.description,
-          readmeExcerpt: parsed.readme.slice(0, 500),
-          topicsJson: topics,
-          publisherIdentifier: publisher.publisherId,
-          platformsJson: platforms,
-          tagsJson: [],
-          rankingFeaturesJson: {},
-        },
-      });
+      const previousLatest = packageRecord.latestVersionId
+        ? await transaction.packageVersion.findUnique({
+            where: { id: packageRecord.latestVersionId },
+            select: { id: true, version: true, retractedAt: true },
+          })
+        : null;
+      const latest = selectLatestRelease(
+        [
+          previousLatest,
+          {
+            id: versionRecord.id,
+            version: versionRecord.version,
+            retractedAt: versionRecord.retractedAt,
+          },
+        ].filter(
+          (
+            item,
+          ): item is {
+            id: bigint;
+            version: string;
+            retractedAt: Date | null;
+          } => item !== null,
+        ),
+      )!;
+      await this.refreshLatestPackage(transaction, packageRecord.id, latest.id);
       await transaction.auditLog.create({
         data: {
           subjectType: "package_version",
@@ -701,51 +758,135 @@ export class PrismaRegistryRepository implements RegistryRepository {
     });
   }
 
+  private async refreshLatestPackage(
+    transaction: Prisma.TransactionClient,
+    packageId: bigint,
+    latestVersionId: bigint,
+  ) {
+    const latest = await transaction.packageVersion.findUnique({
+      where: { id: latestVersionId },
+      include: {
+        package: { include: { publisher: true } },
+        files: {
+          where: { previewStatus: PreviewStatus.READY },
+          select: { id: true },
+          take: 1,
+        },
+        scores: { orderBy: { computedAt: "desc" }, take: 1 },
+      },
+    });
+    if (!latest || latest.packageId !== packageId)
+      throw new Error("Latest package version is inconsistent.");
+    const pubspec = jsonRecord(latest.pubspecJson);
+    const description = String(
+      pubspec.description ??
+        latest.package.description ??
+        "No description provided.",
+    );
+    const topics = stringArray(pubspec.topics);
+    const score = latest.scores[0];
+    await transaction.package.update({
+      where: { id: packageId },
+      data: { latestVersionId, description, topics },
+    });
+    const searchData = {
+      packageVersionId: latestVersionId,
+      name: latest.package.name,
+      description,
+      readmeExcerpt: latest.readmeHtml?.slice(0, 500),
+      topicsJson: topics,
+      publisherIdentifier: latest.package.publisher?.publisherId,
+      platformsJson: platformsFromPubspec(pubspec),
+      tagsJson: stringArray(score?.tagsJson),
+      rankingFeaturesJson: {
+        score: score?.grantedPoints ?? 0,
+        downloads30d: score?.downloadCount30d ?? 0,
+      },
+      sdkKind: isFlutterPackage(pubspec) ? "flutter" : "dart",
+      score: score?.grantedPoints ?? 0,
+      downloads30d: score?.downloadCount30d ?? 0,
+      hasPreview: latest.files.length > 0,
+    } satisfies Omit<Prisma.SearchDocumentUncheckedCreateInput, "packageId">;
+    await transaction.searchDocument.upsert({
+      where: { packageId },
+      update: searchData,
+      create: { packageId, ...searchData },
+    });
+  }
+
   private async backfillEmptyScores() {
+    const configuredLimit = Number(
+      process.env.MAX_SCORE_BACKFILLS_PER_STARTUP ?? 100,
+    );
+    const limit = Number.isFinite(configuredLimit)
+      ? Math.max(0, Math.floor(configuredLimit))
+      : 100;
+    if (!limit) return;
     const versions = await this.prisma.packageVersion.findMany({
-      where: { scores: { some: {} } },
+      where: {
+        scores: {
+          some: { calculationVersion: { lt: SCORE_CALCULATION_VERSION } },
+        },
+      },
       include: {
         files: { select: { path: true } },
         dependencies: true,
         scores: { orderBy: { computedAt: "desc" }, take: 1 },
       },
+      orderBy: { id: "asc" },
+      take: limit,
     });
     for (const version of versions) {
       const current = version.scores[0];
       if (!current) continue;
-      const emptyScore =
-        current.grantedPoints === 0 &&
-        (!Array.isArray(current.breakdownJson) ||
-          current.breakdownJson.length === 0);
-      const automaticScoreNeedsDetails =
-        isAutomaticPackageScore(current.weightsJson) &&
-        !hasScoreDetails(current.breakdownJson);
-      if (!emptyScore && !automaticScoreNeedsDetails) continue;
-      const pubspec = jsonRecord(version.pubspecJson);
-      const calculated = calculatePackageScore({
-        pubspec,
-        description: String(pubspec.description ?? ""),
-        readme: version.readmeHtml ?? "",
-        changelog: version.changelogHtml ?? "",
-        files: version.files,
-        dependencies: version.dependencies.map((dependency) => ({
-          name: dependency.name,
-          constraint: dependency.constraintRaw,
-          scope: dependencyScopeFromDatabase(dependency.scope),
-          source: sourceFromDatabase(dependency.sourceKind),
-        })),
-        downloads30d: current.downloadCount30d,
+      let calculated: Score | null = null;
+      if (current.calculationVersion < SCORE_CALCULATION_VERSION) {
+        const pubspec = jsonRecord(version.pubspecJson);
+        calculated = calculatePackageScore({
+          pubspec,
+          description: String(pubspec.description ?? ""),
+          readme: version.readmeHtml ?? "",
+          changelog: version.changelogHtml ?? "",
+          files: version.files,
+          dependencies: version.dependencies.map((dependency) => ({
+            name: dependency.name,
+            constraint: dependency.constraintRaw,
+            scope: dependencyScopeFromDatabase(dependency.scope),
+            source: sourceFromDatabase(dependency.sourceKind),
+          })),
+          downloads30d: current.downloadCount30d,
+        });
+        await this.prisma.score.update({
+          where: { id: current.id },
+          data: scoreData(calculated),
+        });
+      }
+      await this.prisma.score.updateMany({
+        where: {
+          packageVersionId: version.id,
+          calculationVersion: { lt: SCORE_CALCULATION_VERSION },
+        },
+        data: { calculationVersion: SCORE_CALCULATION_VERSION },
       });
-      await this.prisma.score.update({
-        where: { id: current.id },
-        data: scoreData(calculated),
-      });
+      if (calculated)
+        await this.prisma.searchDocument.updateMany({
+          where: { packageVersionId: version.id },
+          data: {
+            score: calculated.grantedPoints,
+            rankingFeaturesJson: {
+              score: calculated.grantedPoints,
+              downloads30d: current.downloadCount30d,
+            },
+          },
+        });
     }
   }
 
-  private summary(item: DatabasePackage): PackageSummary | null {
-    const latest = selectLatest(item.versions);
-    if (!latest) return null;
+  private summary(
+    item: DatabasePackage,
+    latest: NonNullable<DatabasePackage["latestVersion"]>,
+    hasPreview: boolean,
+  ): PackageSummary {
     const score = scoreFromDatabase(latest.scores[0]);
     return {
       name: item.name,
@@ -757,9 +898,27 @@ export class PrismaRegistryRepository implements RegistryRepository {
       updatedAt: item.updatedAt.toISOString(),
       downloads30d: latest.scores[0]?.downloadCount30d ?? 0,
       score: score.grantedPoints,
-      hasPreview: latest.files.some(
-        (file) => file.previewStatus === PreviewStatus.READY,
-      ),
+      hasPreview,
+    };
+  }
+
+  private summaryFromSearchDocument(
+    item: DatabaseSearchDocument,
+  ): PackageSummary {
+    return {
+      name: item.name,
+      publisherId:
+        item.publisherIdentifier ??
+        item.package.publisher?.publisherId ??
+        "local.private",
+      description: item.description ?? "No description provided.",
+      latestVersion: item.version.version,
+      isDiscontinued: item.package.isDiscontinued,
+      topics: stringArray(item.topicsJson),
+      updatedAt: item.updatedAt.toISOString(),
+      downloads30d: item.downloads30d,
+      score: item.score,
+      hasPreview: item.hasPreview,
     };
   }
 
@@ -846,29 +1005,8 @@ function scoreData(score: Score) {
     tagsJson: score.tags as Prisma.InputJsonArray,
     weightsJson: SCORE_WEIGHTS as Prisma.InputJsonObject,
     breakdownJson: score.breakdown as Prisma.InputJsonArray,
+    calculationVersion: SCORE_CALCULATION_VERSION,
   };
-}
-
-function isAutomaticPackageScore(value: Prisma.JsonValue) {
-  const weights = jsonRecord(value);
-  return [
-    "conventions",
-    "documentation",
-    "platforms",
-    "analysis",
-    "dependencies",
-  ].every((key) => typeof weights[key] === "number");
-}
-
-function hasScoreDetails(value: Prisma.JsonValue) {
-  return (
-    Array.isArray(value) &&
-    value.length > 0 &&
-    value.every((item) => {
-      const breakdown = jsonRecord(item);
-      return Array.isArray(breakdown.details);
-    })
-  );
 }
 
 function mapImport(item: {
@@ -903,14 +1041,6 @@ function selectLatest<T extends { version: string; retractedAt?: unknown }>(
 function compareDatabaseVersions(a: DatabaseVersion, b: DatabaseVersion) {
   return semver.rcompare(a.version, b.version);
 }
-function relevance(item: PackageSummary, query: string) {
-  const value = query.toLowerCase();
-  return (
-    (item.name === value ? 1000 : item.name.includes(value) ? 500 : 0) +
-    (item.description.toLowerCase().includes(value) ? 100 : 0) +
-    item.score
-  );
-}
 function jsonRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -931,6 +1061,13 @@ function platformsFromPubspec(pubspec: Record<string, unknown>) {
     : pubspec.flutter || jsonRecord(pubspec.dependencies).flutter
       ? ["android", "ios", "web", "linux", "macos", "windows"]
       : [];
+}
+function isFlutterPackage(pubspec: Record<string, unknown>) {
+  return Boolean(
+    jsonRecord(pubspec.dependencies).flutter ||
+    jsonRecord(pubspec.environment).flutter ||
+    pubspec.flutter,
+  );
 }
 function dependencyScopeToDatabase(
   scope: "dependencies" | "dev_dependencies" | "dependency_overrides",

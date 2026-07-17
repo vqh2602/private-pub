@@ -4,6 +4,8 @@ import { demoDetails } from "./demo-data.js";
 import type {
   AccountRecord,
   ImportJobRecord,
+  PackageDetailOptions,
+  PackageSearchFilters,
   PublishActor,
   RegistryRepository,
   TokenRecord,
@@ -66,18 +68,7 @@ export class DemoRegistryRepository implements RegistryRepository {
     return { packages: details.length, versions, analyzedVersions };
   }
 
-  async search(
-    query: string,
-    filters: {
-      sdk?: string[];
-      platform?: string[];
-      publisher?: string;
-      hasPreview?: boolean;
-      verifiedPublisher?: boolean;
-      minScore?: number;
-      sort?: string;
-    },
-  ) {
+  async search(query: string, filters: PackageSearchFilters) {
     const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
     let values = [...this.details.values()]
       .map((entry) => entry.package)
@@ -127,7 +118,36 @@ export class DemoRegistryRepository implements RegistryRepository {
             ? b.score - a.score
             : this.relevance(b, query) - this.relevance(a, query),
     );
-    return structuredClone(values);
+    const page = filters.page ?? 1;
+    const limit = filters.limit ?? 20;
+    return {
+      items: structuredClone(values.slice((page - 1) * limit, page * limit)),
+      total: values.length,
+    };
+  }
+
+  async listPublishedPackages(identities: string[]) {
+    const publishers = new Set(identities);
+    return structuredClone(
+      [...this.details.values()].flatMap((detail) => {
+        const versions = detail.versions.filter(
+          (version) =>
+            version.publishedBy !== null && publishers.has(version.publishedBy),
+        );
+        return versions.length ? [{ package: detail.package, versions }] : [];
+      }),
+    );
+  }
+
+  async getPackageMetadata(name: string) {
+    const detail = this.details.get(name);
+    if (!detail) return null;
+    return structuredClone({
+      name,
+      isDiscontinued: detail.package.isDiscontinued,
+      latestVersion: detail.latestVersion,
+      versions: detail.versions,
+    });
   }
 
   private relevance(item: PackageSummary, query: string) {
@@ -140,8 +160,12 @@ export class DemoRegistryRepository implements RegistryRepository {
     );
   }
 
-  async getPackage(name: string) {
-    return structuredClone(this.details.get(name) ?? null);
+  async getPackage(name: string, options: PackageDetailOptions = {}) {
+    const detail = structuredClone(this.details.get(name) ?? null);
+    if (!detail) return null;
+    if (options.includeVersions === false) detail.versions = [];
+    if (options.includeFiles === false) detail.files = [];
+    return detail;
   }
   async getVersion(name: string, version: string) {
     return structuredClone(

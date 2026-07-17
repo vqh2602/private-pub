@@ -172,7 +172,7 @@ CREATE TABLE "package_permissions" (
 );
 
 -- CreateTable
-CREATE TABLE "api_tokens" (
+CREATE TABLE IF NOT EXISTS "api_tokens" (
     "id" BIGSERIAL NOT NULL,
     "subject_id" TEXT NOT NULL,
     "name" TEXT NOT NULL,
@@ -267,10 +267,10 @@ CREATE UNIQUE INDEX "publishers_publisher_id_key" ON "publishers"("publisher_id"
 CREATE UNIQUE INDEX "package_permissions_package_id_subject_type_subject_id_key" ON "package_permissions"("package_id", "subject_type", "subject_id");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "api_tokens_token_hash_key" ON "api_tokens"("token_hash");
+CREATE UNIQUE INDEX IF NOT EXISTS "api_tokens_token_hash_key" ON "api_tokens"("token_hash");
 
 -- CreateIndex
-CREATE INDEX "api_tokens_subject_id_revoked_at_idx" ON "api_tokens"("subject_id", "revoked_at");
+CREATE INDEX IF NOT EXISTS "api_tokens_subject_id_revoked_at_idx" ON "api_tokens"("subject_id", "revoked_at");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "search_documents_package_id_key" ON "search_documents"("package_id");
