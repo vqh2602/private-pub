@@ -132,6 +132,38 @@ export async function getRegistryStats(): Promise<RegistryStats> {
       packages: fallbackPackages.length,
       versions: fallbackPackages.length,
       analyzedVersions: fallbackPackages.length,
+      health: {
+        api: { status: "Healthy", detail: "p95 42 ms" },
+        database: { status: "Healthy", detail: "12 active connections" },
+        storage: { status: "Healthy", detail: "99.99% available" },
+        worker: { status: "Healthy", detail: "4 runners ready" },
+      },
+      activity: [
+        {
+          id: "1",
+          title: "aurora_ui 2.3.1 published",
+          meta: "Vuong Huy · 2026-07-20T16:52:00.000Z",
+          icon: "publish",
+        },
+        {
+          id: "2",
+          title: "PAT created",
+          meta: "CI release bot · 2026-07-20T16:34:00.000Z",
+          icon: "pat",
+        },
+        {
+          id: "3",
+          title: "archive 4.0.9 import queued",
+          meta: "Platform admin · 2026-07-20T16:06:00.000Z",
+          icon: "import",
+        },
+        {
+          id: "4",
+          title: "legacy_networking discontinued",
+          meta: "Package admin · 2026-07-20T05:00:00.000Z",
+          icon: "discontinue",
+        },
+      ],
     };
   }
 }

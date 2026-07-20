@@ -18,6 +18,16 @@ export default async function AdminPage() {
   const analyzedPercent = stats.versions
     ? Math.round((stats.analyzedVersions / stats.versions) * 100)
     : 0;
+
+  const health = stats.health || {
+    api: { status: "Healthy", detail: "p95 42 ms" },
+    database: { status: "Healthy", detail: "12 active connections" },
+    storage: { status: "Healthy", detail: "99.99% available" },
+    worker: { status: "Healthy", detail: "4 runners ready" },
+  };
+
+  const activity = stats.activity || [];
+
   return (
     <main className="subpage admin-page">
       <div className="content-shell compact-content">
@@ -59,21 +69,21 @@ export default async function AdminPage() {
                 <strong>Service health</strong>
               </div>
             </div>
-            <Service icon={<Server />} name="Registry API" detail="p95 42 ms" />
+            <Service icon={<Server />} name="Registry API" detail={health.api.detail} />
             <Service
               icon={<Database />}
               name="PostgreSQL"
-              detail="12 active connections"
+              detail={health.database.detail}
             />
             <Service
               icon={<HardDrive />}
               name="Object storage"
-              detail="99.99% available"
+              detail={health.storage.detail}
             />
             <Service
               icon={<Boxes />}
               name="Analysis worker"
-              detail="4 runners ready"
+              detail={health.worker.detail}
             />
           </section>
           <section className="panel-card">
@@ -83,26 +93,14 @@ export default async function AdminPage() {
                 <strong>Recent activity</strong>
               </div>
             </div>
-            <Audit
-              icon={<CheckCircle2 />}
-              title="aurora_ui 2.3.1 published"
-              meta="Vuong Huy · 14 minutes ago"
-            />
-            <Audit
-              icon={<ShieldCheck />}
-              title="PAT created"
-              meta="CI release bot · 32 minutes ago"
-            />
-            <Audit
-              icon={<Clock3 />}
-              title="archive 4.0.9 import queued"
-              meta="Platform admin · 1 hour ago"
-            />
-            <Audit
-              icon={<AlertTriangle />}
-              title="legacy_networking discontinued"
-              meta="Package admin · yesterday"
-            />
+            {activity.map((item) => (
+              <Audit
+                key={item.id}
+                icon={getActivityIcon(item.icon)}
+                title={item.title}
+                meta={formatMeta(item.meta)}
+              />
+            ))}
           </section>
         </div>
         <UserManagement />
@@ -110,6 +108,52 @@ export default async function AdminPage() {
     </main>
   );
 }
+
+function getActivityIcon(icon: string) {
+  switch (icon) {
+    case "publish":
+      return <CheckCircle2 />;
+    case "pat":
+      return <ShieldCheck />;
+    case "import":
+      return <Clock3 />;
+    case "discontinue":
+      return <AlertTriangle />;
+    default:
+      return <CheckCircle2 />;
+  }
+}
+
+function formatMeta(meta: string) {
+  const parts = meta.split(" · ");
+  if (parts.length !== 2) return meta;
+  const [actor, dateStr] = parts;
+  try {
+    const date = new Date(dateStr!);
+    if (isNaN(date.getTime())) return meta;
+    return `${actor} · ${formatDistanceToNow(date)}`;
+  } catch {
+    return meta;
+  }
+}
+
+function formatDistanceToNow(date: Date): string {
+  const now = new Date();
+  const diffMs = now.getTime() - date.getTime();
+  const diffSecs = Math.floor(diffMs / 1000);
+  const diffMins = Math.floor(diffSecs / 60);
+  const diffHours = Math.floor(diffMins / 60);
+  const diffDays = Math.floor(diffHours / 24);
+
+  if (diffSecs < 60) return "just now";
+  if (diffMins === 1) return "1 minute ago";
+  if (diffMins < 60) return `${diffMins} minutes ago`;
+  if (diffHours === 1) return "1 hour ago";
+  if (diffHours < 24) return `${diffHours} hours ago`;
+  if (diffDays === 1) return "yesterday";
+  return `${diffDays} days ago`;
+}
+
 function Service({
   icon,
   name,
