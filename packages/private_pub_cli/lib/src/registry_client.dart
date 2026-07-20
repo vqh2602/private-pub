@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
@@ -21,7 +22,16 @@ final class RegistryClient {
     http.Client? httpClient,
   })  : host = _normalizeHost(host),
         _httpClient = httpClient ?? http.Client(),
-        _ownsClient = httpClient == null;
+        _ownsClient = httpClient == null {
+    if (token != null &&
+        token!.isNotEmpty &&
+        this.host.scheme != 'https' &&
+        !_isLoopback(this.host.host)) {
+      throw const RegistryException(
+        'Refusing to send a bearer token over HTTP to a non-loopback host.',
+      );
+    }
+  }
 
   final Uri host;
   final String? token;
@@ -32,7 +42,16 @@ final class RegistryClient {
     if (host.scheme != 'http' && host.scheme != 'https') {
       throw const RegistryException('Registry URL must use http or https.');
     }
-    return host.replace(path: host.path.replaceFirst(RegExp(r'/+$'), ''));
+    if (host.userInfo.isNotEmpty) {
+      throw const RegistryException(
+        'Registry URL must not contain embedded credentials.',
+      );
+    }
+    return host.replace(
+      path: host.path.replaceFirst(RegExp(r'/+$'), ''),
+      query: null,
+      fragment: null,
+    );
   }
 
   Future<RegistryPackage> getPackage(String packageName) async {
@@ -48,9 +67,11 @@ final class RegistryClient {
         'Accept': 'application/vnd.pub.v2+json',
         if (token != null && token!.isNotEmpty)
           'Authorization': 'Bearer $token',
-      });
+      }).timeout(const Duration(seconds: 30));
     } on http.ClientException catch (error) {
       throw RegistryException('Cannot connect to $host: ${error.message}');
+    } on TimeoutException {
+      throw RegistryException('Registry request to $host timed out.');
     }
     if (response.statusCode == 404) {
       throw RegistryException(
@@ -89,6 +110,9 @@ final class RegistryClient {
       );
     }
   }
+
+  static bool _isLoopback(String host) =>
+      host == 'localhost' || host == '127.0.0.1' || host == '::1';
 
   void close() {
     if (_ownsClient) _httpClient.close();

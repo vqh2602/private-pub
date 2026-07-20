@@ -259,6 +259,7 @@ model PackagePermission {
   package     Package     @relation(fields: [packageId], references: [id], onDelete: Cascade)
 
   @@unique([packageId, subjectType, subjectId])
+  @@index([subjectId, packageId])
   @@map("package_permissions")
 }
 

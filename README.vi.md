@@ -2,7 +2,7 @@
 
 Constellation là khung monorepo hướng đến môi trường production cho một registry package Dart và Flutter riêng tư. Dự án cung cấp bề mặt Hosted Pub Repository API V2 cho `dart pub` và một control-plane API riêng cho ứng dụng web, quản trị, nhập package, duyệt mã nguồn, phân tích và chấm điểm.
 
-Repository có thể chạy ngay ở chế độ demo với dữ liệu xác định. PostgreSQL, Valkey, MinIO, OIDC, hàng đợi bền vững và các analyzer Dart/Flutter thực được biểu diễn bằng adapter cùng ranh giới schema rõ ràng; các tích hợp production chưa được trình bày như hoàn chỉnh ở những nơi cần credential hoặc hạ tầng tách biệt.
+Repository có thể chạy ở chế độ demo với dữ liệu xác định. PostgreSQL, Valkey, OIDC, hàng đợi bền vững, lưu trữ tương thích S3 và các analyzer Dart/Flutter thực được biểu diễn bằng adapter cùng ranh giới schema rõ ràng; các tích hợp production chưa được trình bày như hoàn chỉnh ở những nơi cần credential hoặc hạ tầng tách biệt.
 
 ## Những gì đã được triển khai
 
@@ -54,7 +54,7 @@ Mở:
 - Giao diện OpenAPI: `http://localhost:4000/docs`
 - Kiểm tra health: `http://localhost:4000/health`
 
-Chế độ demo được bật mặc định. API không yêu cầu token hoặc chấp nhận `Bearer demo-admin-token` và cấp mọi demo scope. Không bao giờ bật chế độ demo trong môi trường production.
+Chế độ database là mặc định an toàn. Chỉ đặt tường minh `DEMO_MODE=true` khi cần dữ liệu demo; khi đó API không yêu cầu token hoặc chấp nhận `Bearer demo-admin-token` và cấp mọi demo scope. Production sẽ từ chối khởi động nếu demo mode được bật hoặc cấu hình này bị bỏ trống.
 
 Để chạy hạ tầng và ứng dụng trong container:
 
@@ -63,7 +63,7 @@ cp .env.example .env
 docker compose up
 ```
 
-PostgreSQL được mở ở `5432`, Valkey ở `6379`, MinIO ở `9000` và giao diện MinIO ở `9001`.
+PostgreSQL và Valkey chỉ bind vào loopback ở cổng `5432` và `6379`. Development stack chưa khởi động object storage cho tới khi adapter S3 được triển khai; archive hiện nằm trong `ARCHIVE_STORAGE_DIR`.
 
 ## Database
 
@@ -174,12 +174,14 @@ Phản hồi phải chứa `"mode":"database"`. Ở database mode, ứng dụng 
 
 ### Tài khoản quản trị và token
 
-Khi chạy ở database mode và bảng `accounts` chưa có dữ liệu, API tự tạo tài khoản quyền cao nhất với thông tin mặc định:
+Khi chạy local ở database mode và bảng `accounts` chưa có dữ liệu, API tự tạo tài khoản quyền cao nhất với thông tin mặc định:
 
 ```text
 username: admin
 password: admin
 ```
+
+Production không chấp nhận credential mặc định. Lần khởi động đầu tiên bắt buộc đặt `DEFAULT_ADMIN_USERNAME` và `DEFAULT_ADMIN_PASSWORD` dài ít nhất 16 ký tự; đồng thời phải cấu hình `TOKEN_PEPPER`, `COOKIE_SECURE=true`, HTTPS `PUBLIC_BASE_URL` và allowlist `CORS_ORIGINS`.
 
 Mở `http://localhost:3000/login`, đăng nhập và đổi mật khẩu ngay. Tài khoản mặc định có cờ `must_change_password`, vì vậy API từ chối tạo/quản lý token và các thao tác ghi cho tới khi mật khẩu được đổi. Có thể thay thông tin bootstrap lần đầu bằng `DEFAULT_ADMIN_USERNAME` và `DEFAULT_ADMIN_PASSWORD`; các biến này không ghi đè tài khoản đã tồn tại.
 
@@ -188,6 +190,10 @@ Quản trị viên tạo tài khoản mới tại `http://localhost:3000/admin`.
 Trang `http://localhost:3000/flutter` cung cấp trình tra cứu release Flutter theo tinh thần Sidekick. Dữ liệu được đọc từ kho release chính thức của Flutter và cache một giờ ở phía Next.js; có thể lọc theo Windows/macOS/Linux, stable/beta/dev, phiên bản Flutter, Dart SDK hoặc commit hash.
 
 Session đăng nhập được lưu ở cookie HttpOnly, `SameSite=Lax`, có thời hạn theo `SESSION_TTL_HOURS`. Đặt `COOKIE_SECURE=true` khi cả Web và API được phục vụ qua HTTPS. PAT được gắn với `account_id`; trang Tokens chỉ liệt kê và cho thu hồi token thuộc tài khoản hiện tại. Mật khẩu, session và PAT không được lưu dạng rõ trong PostgreSQL.
+
+Package mới mặc định là private và tài khoản phát hành đầu tiên nhận quyền `PACKAGE_ADMIN`. Chỉ package admin/writer hoặc quản trị viên registry được thêm version. Metadata, source preview và archive private trả về `404` cho request không có quyền; package `INTERNAL` dành cho mọi tài khoản đã đăng nhập và `PUBLIC` có thể đọc ẩn danh.
+
+Analyzer thật chỉ được bật trong production khi job chạy trong sandbox tách biệt và `ANALYZER_SANDBOXED=true`. Runner phải không chứa credential, chạy user không đặc quyền, giới hạn CPU/RAM/process, dùng filesystem tạm và chặn network mặc định. Nếu chưa có runner này, giữ `MOCK_ANALYZER=true`.
 
 ## Quy trình Dart CLI
 
@@ -292,7 +298,7 @@ Bộ kiểm thử API bao phủ metadata Hosted Pub, xếp hạng tìm kiếm, t
 Trước khi triển khai ra Internet:
 
 1. Chuyển vùng lưu archive/text preview cục bộ từ `ARCHIVE_STORAGE_DIR` sang `S3ArchiveStore` có URL upload/download đã ký, thời hạn ngắn và object key bất biến.
-2. Thêm kiểm tra quyền sở hữu publisher dựa trên database và phân quyền theo từng package cho mọi thay đổi quản trị.
+2. Thêm giao diện ủy quyền và thu hồi quyền package owner/writer đang được luồng publish kiểm tra trong database.
 3. Parse và lập chỉ mục archive `.tar.gz` trong runner cô lập có giới hạn nén/giải nén, giới hạn entry, timeout, không có network, root filesystem chỉ đọc và CPU/bộ nhớ bị giới hạn.
 4. Kết nối hàng đợi bền vững (Valkey/BullMQ, Temporal hoặc cloud queue), idempotency key, retry, xử lý poison job và worker lease.
 5. Thêm tích hợp OIDC/JWKS/SSO tùy chọn, quản trị vòng đời tài khoản, MFA, recovery code, xoay token pepper và tích hợp secret manager.

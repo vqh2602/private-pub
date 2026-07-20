@@ -5,12 +5,13 @@ import type {
   RegistryStats,
   SearchResponse,
 } from "@private-pub/contracts";
+import { cookies } from "next/headers";
 
 const serverApi =
   process.env.INTERNAL_API_URL ??
   process.env.NEXT_PUBLIC_API_URL ??
   "http://localhost:4000";
-const allowDemoFallback = process.env.DEMO_MODE !== "false";
+const allowDemoFallback = process.env.DEMO_MODE === "true";
 
 export interface PackageFilters {
   sdk?: string[];
@@ -46,6 +47,8 @@ export async function searchPackages(
   try {
     const response = await fetch(`${serverApi}/v1/search?${query}`, {
       cache: "no-store",
+      headers: await registryAuthHeaders(),
+      signal: AbortSignal.timeout(30_000),
     });
     if (!response.ok) throw new Error(String(response.status));
     return response.json();
@@ -89,6 +92,8 @@ export async function getRegistryStats(): Promise<RegistryStats> {
   try {
     const response = await fetch(`${serverApi}/v1/stats`, {
       cache: "no-store",
+      headers: await registryAuthHeaders(),
+      signal: AbortSignal.timeout(30_000),
     });
     if (!response.ok) throw new Error(String(response.status));
     return response.json();
@@ -114,7 +119,11 @@ export async function getPackage(
   try {
     const response = await fetch(
       `${serverApi}/v1/packages/${encodeURIComponent(name)}${query.size ? `?${query}` : ""}`,
-      { cache: "no-store" },
+      {
+        cache: "no-store",
+        headers: await registryAuthHeaders(),
+        signal: AbortSignal.timeout(30_000),
+      },
     );
     return response.ok ? response.json() : null;
   } catch (error) {
@@ -136,15 +145,26 @@ export async function getPackageFiles(
   try {
     const response = await fetch(
       `${serverApi}/v1/packages/${encodeURIComponent(name)}/versions/${encodeURIComponent(version)}/files`,
-      { cache: "no-store" },
+      {
+        cache: "no-store",
+        headers: await registryAuthHeaders(),
+        signal: AbortSignal.timeout(30_000),
+      },
     );
-    return response.ok ? response.json() : null;
+    if (!response.ok) return null;
+    const payload = (await response.json()) as { entries?: PackageFile[] };
+    return Array.isArray(payload.entries) ? payload.entries : null;
   } catch (error) {
     if (!allowDemoFallback) throw registryApiUnavailable(error);
     return name === fallbackDetail.package.name && version === v.version
       ? fallbackDetail.files
       : null;
   }
+}
+
+async function registryAuthHeaders() {
+  const session = (await cookies()).get("private_pub_session")?.value;
+  return session ? { cookie: `private_pub_session=${session}` } : undefined;
 }
 
 function registryApiUnavailable(cause: unknown) {

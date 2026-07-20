@@ -2,9 +2,12 @@ import {
   AccountRole as DatabaseAccountRole,
   DependencyScope,
   JobStatus,
+  PackageRole,
   PreviewStatus,
   Prisma,
   PrismaClient,
+  SubjectType,
+  Visibility,
   type PackageFile as DatabaseFile,
   type PackageVersion as DatabaseVersion,
   type Score as DatabaseScore,
@@ -17,12 +20,21 @@ import type {
   Score,
 } from "@private-pub/contracts";
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import {
+  access,
+  copyFile,
+  mkdir,
+  readFile,
+  rename,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import semver from "semver";
 import { parsePackageArchive, type ParsedPackageArchive } from "./archive.js";
 import type {
   AccountRecord,
+  AccessActor,
   ImportJobRecord,
   PackageDetailOptions,
   PackageSearchFilters,
@@ -30,6 +42,7 @@ import type {
   RegistryRepository,
   TokenRecord,
 } from "./domain.js";
+import { PackageVersionConflictError } from "./domain.js";
 import { hashPassword } from "./password.js";
 import {
   calculatePackageScore,
@@ -84,6 +97,16 @@ export class PrismaRegistryRepository implements RegistryRepository {
     if ((await this.prisma.account.count()) === 0) {
       const username = process.env.DEFAULT_ADMIN_USERNAME ?? "admin";
       const password = process.env.DEFAULT_ADMIN_PASSWORD ?? "admin";
+      if (
+        process.env.NODE_ENV === "production" &&
+        (!process.env.DEFAULT_ADMIN_USERNAME ||
+          !process.env.DEFAULT_ADMIN_PASSWORD ||
+          password === "admin" ||
+          password.length < 16)
+      )
+        throw new Error(
+          "Initial production setup requires DEFAULT_ADMIN_USERNAME and a non-default DEFAULT_ADMIN_PASSWORD of at least 16 characters.",
+        );
       await this.prisma.account.create({
         data: {
           username,
@@ -115,8 +138,12 @@ export class PrismaRegistryRepository implements RegistryRepository {
     return { packages, versions, analyzedVersions };
   }
 
-  async search(query: string, filters: PackageSearchFilters) {
-    const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
+  async search(
+    query: string,
+    filters: PackageSearchFilters,
+    actor?: AccessActor,
+  ) {
+    const terms = query.toLowerCase().split(/\s+/).filter(Boolean).slice(0, 12);
     const platforms = filters.platform?.flatMap((platform) =>
       platform === "desktop" ? ["linux", "macos", "windows"] : [platform],
     );
@@ -129,6 +156,24 @@ export class PrismaRegistryRepository implements RegistryRepository {
         { topicsJson: { array_contains: [term] } },
       ],
     }));
+    if (actor?.role !== "admin" && actor?.role !== "super_admin") {
+      and.push({
+        package: {
+          is: actor
+            ? {
+                OR: [
+                  { visibility: Visibility.PUBLIC },
+                  { visibility: Visibility.INTERNAL },
+                  {
+                    visibility: Visibility.PRIVATE,
+                    permissions: { some: { subjectId: actor.id } },
+                  },
+                ],
+              }
+            : { visibility: Visibility.PUBLIC },
+        },
+      });
+    }
     if (platforms?.length) {
       and.push({
         OR: platforms.map((platform) => ({
@@ -186,6 +231,29 @@ export class PrismaRegistryRepository implements RegistryRepository {
       ),
       total,
     };
+  }
+
+  async canReadPackage(name: string, actor?: AccessActor) {
+    const item = await this.prisma.package.findUnique({
+      where: { name },
+      select: {
+        visibility: true,
+        permissions: {
+          where: { subjectId: actor?.id ?? "__anonymous__" },
+          select: { id: true },
+          take: 1,
+        },
+      },
+    });
+    if (!item) return false;
+    if (item.visibility === Visibility.PUBLIC) return true;
+    if (!actor) return false;
+    if (item.visibility === Visibility.INTERNAL) return true;
+    return (
+      actor.role === "admin" ||
+      actor.role === "super_admin" ||
+      Boolean(item.permissions?.length)
+    );
   }
 
   async listPublishedPackages(identities: string[]) {
@@ -310,7 +378,7 @@ export class PrismaRegistryRepository implements RegistryRepository {
       readme: latest.readmeHtml ?? `# ${item.name}`,
       changelog:
         latest.changelogHtml ?? "# Changelog\n\nNo changelog was included.",
-      files: await Promise.all(files.map((file) => this.mapFile(file))),
+      files: await Promise.all(files.map((file) => this.mapFile(file, false))),
     };
   }
 
@@ -321,13 +389,21 @@ export class PrismaRegistryRepository implements RegistryRepository {
     return item ? mapVersion(item) : null;
   }
 
-  async getFiles(name: string, version: string) {
+  async getFiles(
+    name: string,
+    version: string,
+    options: { includeContent?: boolean } = {},
+  ) {
     const item = await this.prisma.packageVersion.findFirst({
       where: { package: { name }, version },
       include: { files: { orderBy: { sortOrder: "asc" } } },
     });
     return item
-      ? Promise.all(item.files.map((file) => this.mapFile(file)))
+      ? Promise.all(
+          item.files.map((file) =>
+            this.mapFile(file, options.includeContent !== false),
+          ),
+        )
       : null;
   }
 
@@ -335,7 +411,7 @@ export class PrismaRegistryRepository implements RegistryRepository {
     const item = await this.prisma.packageFile.findFirst({
       where: { version: { package: { name }, version }, path },
     });
-    return item ? this.mapFile(item) : null;
+    return item ? this.mapFile(item, true) : null;
   }
 
   async getScore(name: string, version: string) {
@@ -432,20 +508,29 @@ export class PrismaRegistryRepository implements RegistryRepository {
       select: { id: true },
     });
     if (existing) return null;
-    const item = await this.prisma.account.create({
-      data: {
-        username: input.username,
-        passwordHash: input.passwordHash,
-        role:
-          input.role === "super_admin"
-            ? DatabaseAccountRole.SUPER_ADMIN
-            : input.role === "admin"
-              ? DatabaseAccountRole.ADMIN
-              : DatabaseAccountRole.USER,
-        mustChangePassword: input.mustChangePassword,
-      },
-    });
-    return mapAccount(item);
+    try {
+      const item = await this.prisma.account.create({
+        data: {
+          username: input.username,
+          passwordHash: input.passwordHash,
+          role:
+            input.role === "super_admin"
+              ? DatabaseAccountRole.SUPER_ADMIN
+              : input.role === "admin"
+                ? DatabaseAccountRole.ADMIN
+                : DatabaseAccountRole.USER,
+          mustChangePassword: input.mustChangePassword,
+        },
+      });
+      return mapAccount(item);
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === "P2002"
+      )
+        return null;
+      throw error;
+    }
   }
 
   async createSession(accountId: string, tokenHash: string, expiresAt: string) {
@@ -461,10 +546,12 @@ export class PrismaRegistryRepository implements RegistryRepository {
     });
     if (!item || item.expiresAt <= new Date() || !item.account.isActive)
       return null;
-    await this.prisma.authSession.update({
-      where: { id: item.id },
-      data: { lastSeenAt: new Date() },
-    });
+    const refreshBefore = new Date(Date.now() - 5 * 60 * 1000);
+    if (item.lastSeenAt < refreshBefore)
+      await this.prisma.authSession.updateMany({
+        where: { id: item.id, lastSeenAt: { lt: refreshBefore } },
+        data: { lastSeenAt: new Date() },
+      });
     return mapAccount(item.account);
   }
 
@@ -527,10 +614,15 @@ export class PrismaRegistryRepository implements RegistryRepository {
       (item.expiresAt && item.expiresAt <= new Date())
     )
       return null;
-    await this.prisma.apiToken.update({
-      where: { id: item.id },
-      data: { lastUsedAt: new Date() },
-    });
+    const refreshBefore = new Date(Date.now() - 5 * 60 * 1000);
+    if (!item.lastUsedAt || item.lastUsedAt < refreshBefore)
+      await this.prisma.apiToken.updateMany({
+        where: {
+          id: item.id,
+          OR: [{ lastUsedAt: null }, { lastUsedAt: { lt: refreshBefore } }],
+        },
+        data: { lastUsedAt: new Date() },
+      });
     return {
       id: item.account.id,
       username: item.account.username,
@@ -547,24 +639,43 @@ export class PrismaRegistryRepository implements RegistryRepository {
     return result.count > 0;
   }
 
-  async publishArchive(archive: Buffer, actor: PublishActor) {
+  async publishArchive(archive: Buffer | string, actor: PublishActor) {
     const parsed = await parsePackageArchive(archive);
     const existingPackage = await this.prisma.package.findUnique({
       where: { name: parsed.name },
-      select: { id: true },
+      select: {
+        id: true,
+        permissions: {
+          where: { subjectId: actor.id },
+          select: { role: true },
+        },
+      },
     });
+    if (
+      existingPackage &&
+      actor.role !== "admin" &&
+      actor.role !== "super_admin" &&
+      !existingPackage.permissions.some(
+        (permission) =>
+          permission.role === PackageRole.PACKAGE_ADMIN ||
+          permission.role === PackageRole.PACKAGE_WRITER,
+      )
+    )
+      throw forbiddenPublish(parsed.name);
     const duplicate = await this.prisma.packageVersion.findFirst({
       where: { package: { name: parsed.name }, version: parsed.version },
       select: { id: true },
     });
     if (duplicate)
-      throw new Error(
-        `Version ${parsed.version} of ${parsed.name} already exists.`,
-      );
+      throw new PackageVersionConflictError(parsed.name, parsed.version);
 
+    const objectId = randomUUID();
     const archivePath = join(
       this.storageDirectory,
-      `${parsed.name}-${parsed.version}.tar.gz`,
+      "objects",
+      parsed.name,
+      parsed.version,
+      `${objectId}.tar.gz`,
     );
     const temporaryPath = `${archivePath}.${randomUUID()}.tmp`;
     const previewDirectory = join(
@@ -572,13 +683,28 @@ export class PrismaRegistryRepository implements RegistryRepository {
       "files",
       parsed.name,
       parsed.version,
+      objectId,
     );
-    await mkdir(dirname(archivePath), { recursive: true });
-    await mkdir(previewDirectory, { recursive: true });
-    await writeFile(temporaryPath, archive, { flag: "wx" });
-    await rename(temporaryPath, archivePath);
-    const files = await Promise.all(
-      parsed.files.map(async (file, index) => {
+    const files: Array<{
+      path: string;
+      kind: string;
+      sizeBytes: bigint;
+      mimeType: null;
+      sha256: string;
+      storageKey: string;
+      isText: boolean;
+      language?: string;
+      previewStatus: PreviewStatus;
+      sortOrder: number;
+    }> = [];
+    try {
+      await mkdir(dirname(archivePath), { recursive: true });
+      await mkdir(previewDirectory, { recursive: true });
+      if (Buffer.isBuffer(archive))
+        await writeFile(temporaryPath, archive, { flag: "wx" });
+      else await copyFile(archive, temporaryPath);
+      await rename(temporaryPath, archivePath);
+      for (const [index, file] of parsed.files.entries()) {
         const previewPath =
           file.content === undefined
             ? `${archivePath}#${file.path}`
@@ -588,7 +714,7 @@ export class PrismaRegistryRepository implements RegistryRepository {
               );
         if (file.content !== undefined)
           await writeFile(previewPath, file.content, "utf8");
-        return {
+        files.push({
           path: file.path,
           kind: file.type,
           sizeBytes: BigInt(file.size ?? 0),
@@ -604,15 +730,20 @@ export class PrismaRegistryRepository implements RegistryRepository {
               ? PreviewStatus.READY
               : PreviewStatus.UNSUPPORTED,
           sortOrder: index,
-        };
-      }),
-    );
-
-    try {
+        });
+      }
       await this.persistPackage(parsed, archivePath, files, actor);
     } catch (error) {
-      await rm(archivePath, { force: true });
-      await rm(previewDirectory, { recursive: true, force: true });
+      await Promise.allSettled([
+        rm(temporaryPath, { force: true }),
+        rm(archivePath, { force: true }),
+        rm(previewDirectory, { recursive: true, force: true }),
+      ]);
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === "P2002"
+      )
+        throw new PackageVersionConflictError(parsed.name, parsed.version);
       throw error;
     }
     return {
@@ -630,6 +761,21 @@ export class PrismaRegistryRepository implements RegistryRepository {
     if (!item) return null;
     try {
       return await readFile(item.archiveObjectKey);
+    } catch (error) {
+      if (isMissingFile(error)) return null;
+      throw error;
+    }
+  }
+
+  async getArchivePath(name: string, version: string) {
+    const item = await this.prisma.packageVersion.findFirst({
+      where: { package: { name }, version },
+      select: { archiveObjectKey: true },
+    });
+    if (!item) return null;
+    try {
+      await access(item.archiveObjectKey);
+      return item.archiveObjectKey;
     } catch (error) {
       if (isMissingFile(error)) return null;
       throw error;
@@ -657,6 +803,30 @@ export class PrismaRegistryRepository implements RegistryRepository {
     const topics = stringArray(parsed.pubspec.topics);
     const calculatedScore = scoreParsedPackage(parsed);
     await this.prisma.$transaction(async (transaction) => {
+      await transaction.$queryRaw`
+        SELECT pg_advisory_xact_lock(hashtext(${parsed.name}))
+      `;
+      const existing = await transaction.package.findUnique({
+        where: { name: parsed.name },
+        select: {
+          id: true,
+          permissions: {
+            where: { subjectId: actor.id },
+            select: { role: true },
+          },
+        },
+      });
+      if (
+        existing &&
+        actor.role !== "admin" &&
+        actor.role !== "super_admin" &&
+        !existing.permissions.some(
+          (permission) =>
+            permission.role === PackageRole.PACKAGE_ADMIN ||
+            permission.role === PackageRole.PACKAGE_WRITER,
+        )
+      )
+        throw forbiddenPublish(parsed.name);
       const publisher = await transaction.publisher.upsert({
         where: { publisherId: this.publisherId },
         update: {},
@@ -678,6 +848,16 @@ export class PrismaRegistryRepository implements RegistryRepository {
           publisherId: publisher.id,
         },
       });
+      if (!existing)
+        await transaction.packagePermission.create({
+          data: {
+            packageId: packageRecord.id,
+            subjectType: SubjectType.USER,
+            subjectId: actor.id,
+            role: PackageRole.PACKAGE_ADMIN,
+            grantedBy: actor.id,
+          },
+        });
       const versionRecord = await transaction.packageVersion.create({
         data: {
           packageId: packageRecord.id,
@@ -922,9 +1102,12 @@ export class PrismaRegistryRepository implements RegistryRepository {
     };
   }
 
-  private async mapFile(file: DatabaseFile): Promise<PackageFile> {
+  private async mapFile(
+    file: DatabaseFile,
+    includeContent: boolean,
+  ): Promise<PackageFile> {
     let content: string | undefined;
-    if (file.isText) {
+    if (includeContent && file.isText) {
       try {
         content = await readFile(file.storageKey, "utf8");
       } catch (error) {
@@ -1031,6 +1214,14 @@ function mapImport(item: {
       ? { summary: item.summaryJson as Record<string, unknown> }
       : {}),
   };
+}
+
+function forbiddenPublish(packageName: string) {
+  const error = new Error(
+    `The current account does not have permission to publish ${packageName}.`,
+  ) as Error & { statusCode?: number };
+  error.statusCode = 403;
+  return error;
 }
 
 function selectLatest<T extends { version: string; retractedAt?: unknown }>(

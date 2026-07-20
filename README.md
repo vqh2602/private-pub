@@ -2,7 +2,7 @@
 
 Constellation is a production-oriented monorepo scaffold for a private Dart and Flutter package registry. It exposes a Hosted Pub Repository API V2 surface for `dart pub` and a separate control-plane API for the web app, administration, imports, code exploration, analysis, and scoring.
 
-The repository runs immediately in demo mode with deterministic data. PostgreSQL, Valkey, MinIO, OIDC, durable queues, and real Dart/Flutter analyzers are represented by explicit adapters and schema boundaries; production integrations are deliberately not presented as complete where credentials or isolated infrastructure are required.
+The repository defaults to database mode. Set `DEMO_MODE=true` explicitly to run with deterministic demo data. PostgreSQL, Valkey, OIDC, durable queues, S3-compatible storage, and real Dart/Flutter analyzers are represented by explicit adapters and schema boundaries; production integrations are deliberately not presented as complete where credentials or isolated infrastructure are required.
 
 ## What is implemented
 
@@ -54,7 +54,7 @@ Open:
 - OpenAPI UI: `http://localhost:4000/docs`
 - Health check: `http://localhost:4000/health`
 
-Demo mode is enabled by default. The API accepts no token or `Bearer demo-admin-token` and grants all demo scopes. Never enable demo mode in a production environment.
+Demo mode is opt-in. When `DEMO_MODE=true`, the API accepts no token or `Bearer demo-admin-token` and grants all demo scopes. Production refuses to start unless `DEMO_MODE=false` and the required security settings are present.
 
 To run the infrastructure and applications in containers:
 
@@ -63,7 +63,7 @@ cp .env.example .env
 docker compose up
 ```
 
-PostgreSQL is exposed on `5432`, Valkey on `6379`, MinIO on `9000`, and the MinIO console on `9001`.
+PostgreSQL and Valkey bind to loopback ports `5432` and `6379`. Object storage is not started by the development stack until the S3 adapter is implemented; archive data remains under `ARCHIVE_STORAGE_DIR`.
 
 ## Database
 
@@ -272,7 +272,7 @@ The API suite covers Hosted Pub metadata, search ranking, retraction/restore, tr
 Before an internet-facing deployment:
 
 1. Move local archive/text-preview storage from `ARCHIVE_STORAGE_DIR` to an `S3ArchiveStore` with short-lived signed upload/download URLs and immutable object keys.
-2. Add database-backed publisher ownership checks and per-package authorization to every administrative mutation.
+2. Add UI workflows for delegating and revoking the database-backed package owner/writer permissions enforced by publish operations.
 3. Parse and index `.tar.gz` archives in an isolated runner with compressed/uncompressed limits, entry limits, timeouts, no network, read-only root filesystem, and constrained CPU/memory.
 4. Connect a durable queue (Valkey/BullMQ, Temporal, or a cloud queue), idempotency keys, retries, poison-job handling, and worker leases.
 5. Add optional OIDC/JWKS/SSO integration, account lifecycle administration, MFA, recovery codes, token-pepper rotation, and secret-manager integration.

@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 
-const registryApi = process.env.INTERNAL_API_URL ?? process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
+const registryApi =
+  process.env.INTERNAL_API_URL ??
+  process.env.NEXT_PUBLIC_API_URL ??
+  "http://localhost:4000";
 
 export async function GET(
   request: NextRequest,
@@ -8,23 +11,33 @@ export async function GET(
 ) {
   const { name, version } = await params;
   const headers = new Headers();
-  const cookie = request.headers.get("cookie");
-  if (cookie) headers.set("cookie", cookie);
+  const session = request.cookies.get("private_pub_session")?.value;
+  if (session) headers.set("cookie", `private_pub_session=${session}`);
 
   try {
     const response = await fetch(
       `${registryApi}/api/packages/${encodeURIComponent(name)}/versions/${encodeURIComponent(version)}.tar.gz`,
-      { headers, cache: "no-store" },
+      { headers, cache: "no-store", signal: AbortSignal.timeout(120_000) },
     );
     const outputHeaders = new Headers();
-    for (const header of ["content-type", "content-disposition", "content-length"]) {
+    for (const header of [
+      "content-type",
+      "content-disposition",
+      "content-length",
+    ]) {
       const value = response.headers.get(header);
       if (value) outputHeaders.set(header, value);
     }
-    return new NextResponse(response.body, { status: response.status, headers: outputHeaders });
+    return new NextResponse(response.body, {
+      status: response.status,
+      headers: outputHeaders,
+    });
   } catch {
     return NextResponse.json(
-      { error: "registry_unavailable", message: "The registry API is unavailable." },
+      {
+        error: "registry_unavailable",
+        message: "The registry API is unavailable.",
+      },
       { status: 502 },
     );
   }

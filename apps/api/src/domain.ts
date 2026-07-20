@@ -56,9 +56,25 @@ export interface PublishArchiveResult {
   packageCreated: boolean;
 }
 
+export class PackageVersionConflictError extends Error {
+  readonly statusCode = 409;
+
+  constructor(name: string, version: string) {
+    super(`Version ${version} of ${name} already exists.`);
+    this.name = "PackageVersionConflictError";
+  }
+}
+
 export interface PublishActor {
   id: string;
   username?: string;
+  role?: AccountRole;
+}
+
+export interface AccessActor {
+  id: string;
+  username?: string;
+  role?: AccountRole;
 }
 
 export interface PackageMetadata {
@@ -103,7 +119,9 @@ export interface RegistryRepository {
   search(
     query: string,
     filters: PackageSearchFilters,
+    actor?: AccessActor,
   ): Promise<PackageSearchResult>;
+  canReadPackage(name: string, actor?: AccessActor): Promise<boolean>;
   listPublishedPackages(identities: string[]): Promise<PublishedPackage[]>;
   getPackageMetadata(name: string): Promise<PackageMetadata | null>;
   getPackage(
@@ -111,7 +129,11 @@ export interface RegistryRepository {
     options?: PackageDetailOptions,
   ): Promise<PackageDetail | null>;
   getVersion(name: string, version: string): Promise<PackageVersion | null>;
-  getFiles(name: string, version: string): Promise<PackageFile[] | null>;
+  getFiles(
+    name: string,
+    version: string,
+    options?: { includeContent?: boolean },
+  ): Promise<PackageFile[] | null>;
   getFile(
     name: string,
     version: string,
@@ -158,8 +180,9 @@ export interface RegistryRepository {
   } | null>;
   revokeToken(id: string, accountId: string): Promise<boolean>;
   publishArchive(
-    archive: Buffer,
+    archive: Buffer | string,
     actor: PublishActor,
   ): Promise<PublishArchiveResult>;
   getArchive(name: string, version: string): Promise<Buffer | null>;
+  getArchivePath?(name: string, version: string): Promise<string | null>;
 }

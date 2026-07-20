@@ -3,6 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { demoDetails } from "./demo-data.js";
 import type {
   AccountRecord,
+  AccessActor,
   ImportJobRecord,
   PackageDetailOptions,
   PackageSearchFilters,
@@ -10,9 +11,18 @@ import type {
   RegistryRepository,
   TokenRecord,
 } from "./domain.js";
+import { PackageVersionConflictError } from "./domain.js";
 import { parsePackageArchive } from "./archive.js";
 import semver from "semver";
-import { mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
+import {
+  copyFile,
+  mkdir,
+  readFile,
+  readdir,
+  rename,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { scoreParsedPackage } from "./scoring.js";
 import { releaseChannel, selectLatestRelease } from "./release-channel.js";
@@ -23,6 +33,8 @@ export class DemoRegistryRepository implements RegistryRepository {
   private readonly imports = new Map<string, ImportJobRecord>();
   private readonly tokens = new Map<string, TokenRecord>();
   private readonly archives = new Map<string, Buffer>();
+  private readonly archivePaths = new Map<string, string>();
+  private readonly packageOwners = new Map<string, string>();
   private readonly accounts = new Map<string, AccountRecord>();
   private readonly sessions = new Map<
     string,
@@ -44,10 +56,12 @@ export class DemoRegistryRepository implements RegistryRepository {
     for (const filename of filenames) {
       const archive = await readFile(join(directory, filename));
       const parsed = await parsePackageArchive(archive);
-      this.registerParsedArchive(parsed, archive, {
-        id: "restored-archive",
-        username: "Unknown",
-      });
+      this.registerParsedArchive(
+        parsed,
+        archive,
+        { id: "restored-archive", username: "Unknown" },
+        join(directory, filename),
+      );
     }
   }
 
@@ -68,7 +82,11 @@ export class DemoRegistryRepository implements RegistryRepository {
     return { packages: details.length, versions, analyzedVersions };
   }
 
-  async search(query: string, filters: PackageSearchFilters) {
+  async search(
+    query: string,
+    filters: PackageSearchFilters,
+    _actor?: AccessActor,
+  ) {
     const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
     let values = [...this.details.values()]
       .map((entry) => entry.package)
@@ -126,6 +144,15 @@ export class DemoRegistryRepository implements RegistryRepository {
     };
   }
 
+  async canReadPackage(name: string, actor?: AccessActor) {
+    if (!this.details.has(name)) return false;
+    return (
+      actor?.role === "admin" ||
+      actor?.role === "super_admin" ||
+      this.packageOwners.get(name) === actor?.id
+    );
+  }
+
   async listPublishedPackages(identities: string[]) {
     const publishers = new Set(identities);
     return structuredClone(
@@ -174,10 +201,16 @@ export class DemoRegistryRepository implements RegistryRepository {
         ?.versions.find((item) => item.version === version) ?? null,
     );
   }
-  async getFiles(name: string, version: string) {
-    return (await this.getVersion(name, version))
-      ? structuredClone(this.details.get(name)?.files ?? [])
-      : null;
+  async getFiles(
+    name: string,
+    version: string,
+    options: { includeContent?: boolean } = {},
+  ) {
+    if (!(await this.getVersion(name, version))) return null;
+    const files = structuredClone(this.details.get(name)?.files ?? []);
+    if (options.includeContent === false)
+      for (const file of files) delete file.content;
+    return files;
   }
   async getFile(
     name: string,
@@ -185,7 +218,7 @@ export class DemoRegistryRepository implements RegistryRepository {
     path: string,
   ): Promise<PackageFile | null> {
     return (
-      (await this.getFiles(name, version))?.find(
+      (await this.getFiles(name, version, { includeContent: true }))?.find(
         (item) => item.path === path,
       ) ?? null
     );
@@ -328,25 +361,59 @@ export class DemoRegistryRepository implements RegistryRepository {
     token.revokedAt = new Date().toISOString();
     return true;
   }
-  async publishArchive(archive: Buffer, actor: PublishActor) {
+  async publishArchive(archive: Buffer | string, actor: PublishActor) {
     const parsed = await parsePackageArchive(archive);
     const existing = this.details.get(parsed.name);
-    if (existing?.versions.some((item) => item.version === parsed.version))
-      throw new Error(
-        `Version ${parsed.version} of ${parsed.name} already exists.`,
-      );
-    if (this.storageDirectory) {
-      const directory = resolve(this.storageDirectory);
-      await mkdir(directory, { recursive: true });
-      const destination = join(
-        directory,
-        `${parsed.name}-${parsed.version}.tar.gz`,
-      );
-      const temporary = `${destination}.${randomUUID()}.tmp`;
-      await writeFile(temporary, archive, { flag: "wx" });
-      await rename(temporary, destination);
+    const owner = this.packageOwners.get(parsed.name);
+    if (
+      existing &&
+      actor.role !== "admin" &&
+      actor.role !== "super_admin" &&
+      owner !== actor.id
+    ) {
+      const error = new Error(
+        `Account ${actor.username ?? actor.id} cannot publish ${parsed.name}.`,
+      ) as Error & { statusCode?: number };
+      error.statusCode = 403;
+      throw error;
     }
-    this.registerParsedArchive(parsed, archive, actor);
+    if (existing?.versions.some((item) => item.version === parsed.version))
+      throw new PackageVersionConflictError(parsed.name, parsed.version);
+    let storedPath: string | undefined;
+    let temporaryPath: string | undefined;
+    try {
+      if (this.storageDirectory) {
+        const directory = resolve(this.storageDirectory);
+        await mkdir(directory, { recursive: true });
+        const destination = join(
+          directory,
+          `${parsed.name}-${parsed.version}-${randomUUID()}.tar.gz`,
+        );
+        temporaryPath = `${destination}.${randomUUID()}.tmp`;
+        if (Buffer.isBuffer(archive))
+          await writeFile(temporaryPath, archive, { flag: "wx" });
+        else await copyFile(archive, temporaryPath);
+        await rename(temporaryPath, destination);
+        temporaryPath = undefined;
+        storedPath = destination;
+      }
+    } catch (error) {
+      if (temporaryPath) await rm(temporaryPath, { force: true });
+      if (storedPath) await rm(storedPath, { force: true });
+      throw error;
+    }
+    const archiveBuffer = Buffer.isBuffer(archive)
+      ? archive
+      : storedPath
+        ? Buffer.alloc(0)
+        : await readFile(archive);
+    try {
+      this.registerParsedArchive(parsed, archiveBuffer, actor, storedPath);
+    } catch (error) {
+      if (storedPath) await rm(storedPath, { force: true });
+      throw error;
+    }
+    if (!existing) this.packageOwners.set(parsed.name, actor.id);
     return {
       name: parsed.name,
       version: parsed.version,
@@ -358,12 +425,11 @@ export class DemoRegistryRepository implements RegistryRepository {
     parsed: Awaited<ReturnType<typeof parsePackageArchive>>,
     archive: Buffer,
     actor: PublishActor,
+    archivePath?: string,
   ) {
     const existing = this.details.get(parsed.name);
     if (existing?.versions.some((item) => item.version === parsed.version))
-      throw new Error(
-        `Version ${parsed.version} of ${parsed.name} already exists.`,
-      );
+      throw new PackageVersionConflictError(parsed.name, parsed.version);
     const publishedAt = new Date().toISOString();
     const packageVersion = {
       version: parsed.version,
@@ -454,10 +520,19 @@ export class DemoRegistryRepository implements RegistryRepository {
         files: parsed.files,
       });
     }
-    this.archives.set(`${parsed.name}@${parsed.version}`, Buffer.from(archive));
+    const archiveKey = `${parsed.name}@${parsed.version}`;
+    if (archive.length) this.archives.set(archiveKey, Buffer.from(archive));
+    if (archivePath) this.archivePaths.set(archiveKey, archivePath);
   }
   async getArchive(name: string, version: string) {
-    return this.archives.get(`${name}@${version}`) ?? null;
+    const key = `${name}@${version}`;
+    const archive = this.archives.get(key);
+    if (archive) return archive;
+    const path = this.archivePaths.get(key);
+    return path ? readFile(path) : null;
+  }
+  async getArchivePath(name: string, version: string) {
+    return this.archivePaths.get(`${name}@${version}`) ?? null;
   }
 }
 

@@ -49,7 +49,7 @@ export default async function FilesPage({
           </form>
         </div>
         <PackageTabs name={name} active="files" />
-        <FileExplorer files={files} version={selected} />
+        <FileExplorer files={files} version={selected} packageName={name} />
       </div>
     </main>
   );

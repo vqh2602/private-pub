@@ -1,33 +1,65 @@
 import { createHash } from "node:crypto";
+import { createReadStream } from "node:fs";
 import { createGunzip } from "node:zlib";
-import { Readable } from "node:stream";
+import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import tar from "tar-stream";
 import { parse as parseYaml } from "yaml";
 import semver from "semver";
 import type { PackageFile } from "@private-pub/contracts";
 
-export interface ArchiveEntry { path: string; size: number; type: "file" | "directory" | "symlink"; linkPath?: string }
+export interface ArchiveEntry {
+  path: string;
+  size: number;
+  type: "file" | "directory" | "symlink";
+  linkPath?: string;
+}
 
-export function validateArchiveIndex(entries: ArchiveEntry[], limits: { maxUncompressedBytes: number; maxFileCount: number; maxFileBytes?: number } = { maxUncompressedBytes: 256 * 1024 * 1024, maxFileCount: 64 * 1024 }) {
+export class InvalidArchiveError extends Error {
+  readonly statusCode = 400;
+
+  constructor(message: string) {
+    super(message);
+    this.name = "InvalidArchiveError";
+  }
+}
+
+export function validateArchiveIndex(
+  entries: ArchiveEntry[],
+  limits: {
+    maxUncompressedBytes: number;
+    maxFileCount: number;
+    maxFileBytes?: number;
+  } = { maxUncompressedBytes: 256 * 1024 * 1024, maxFileCount: 64 * 1024 },
+) {
   const errors: string[] = [];
   let total = 0;
   const seen = new Set<string>();
   for (const entry of entries) {
-    const normalized = entry.path.replaceAll("\\", "/");
+    const normalized = normalizeArchivePath(entry.path);
     total += entry.size;
-    if (normalized.startsWith("/") || normalized.split("/").includes("..")) errors.push(`Unsafe path: ${entry.path}`);
-    if (seen.has(normalized)) errors.push(`Duplicate path: ${entry.path}`);
-    if (limits.maxFileBytes !== undefined && entry.size > limits.maxFileBytes) errors.push(`File exceeds limit: ${entry.path}`);
-    if (entry.type === "symlink" && (!entry.linkPath || entry.linkPath.startsWith("/") || entry.linkPath.split("/").includes(".."))) errors.push(`Unsafe symlink: ${entry.path}`);
-    seen.add(normalized);
+    if (!normalized) errors.push(`Unsafe path: ${entry.path}`);
+    if (normalized && seen.has(normalized))
+      errors.push(`Duplicate path: ${entry.path}`);
+    if (limits.maxFileBytes !== undefined && entry.size > limits.maxFileBytes)
+      errors.push(`File exceeds limit: ${entry.path}`);
+    if (
+      entry.type === "symlink" &&
+      (!entry.linkPath || !normalizeArchivePath(entry.linkPath, true))
+    )
+      errors.push(`Unsafe symlink: ${entry.path}`);
+    if (normalized) seen.add(normalized);
   }
-  if (total > limits.maxUncompressedBytes) errors.push("Archive exceeds uncompressed size limit");
-  if (entries.length > limits.maxFileCount) errors.push("Archive exceeds file count limit");
+  if (total > limits.maxUncompressedBytes)
+    errors.push("Archive exceeds uncompressed size limit");
+  if (entries.length > limits.maxFileCount)
+    errors.push("Archive exceeds file count limit");
   return { valid: errors.length === 0, errors, totalBytes: total };
 }
 
-export function archiveSha256(buffer: Buffer) { return createHash("sha256").update(buffer).digest("hex"); }
+export function archiveSha256(buffer: Buffer) {
+  return createHash("sha256").update(buffer).digest("hex");
+}
 
 export interface ParsedDependency {
   name: string;
@@ -52,57 +84,218 @@ export interface ParsedPackageArchive {
   dependencies: ParsedDependency[];
 }
 
-export async function parsePackageArchive(buffer: Buffer): Promise<ParsedPackageArchive> {
-  const maxArchiveBytes = Number(process.env.MAX_ARCHIVE_BYTES ?? 100 * 1024 * 1024);
-  if (buffer.length === 0) throw new Error("Package archive is empty.");
-  if (buffer.length > maxArchiveBytes) throw new Error(`Package archive exceeds compressed size limit (${maxArchiveBytes} bytes).`);
+export async function parsePackageArchive(
+  source: Buffer | string,
+): Promise<ParsedPackageArchive> {
+  const maxArchiveBytes = positiveLimit("MAX_ARCHIVE_BYTES", 100 * 1024 * 1024);
+  if (Buffer.isBuffer(source) && source.length === 0)
+    throw new InvalidArchiveError("Package archive is empty.");
+  if (Buffer.isBuffer(source) && source.length > maxArchiveBytes)
+    throw new InvalidArchiveError(
+      `Package archive exceeds compressed size limit (${maxArchiveBytes} bytes).`,
+    );
+  const maxUncompressedBytes = positiveLimit(
+    "MAX_UNCOMPRESSED_BYTES",
+    256 * 1024 * 1024,
+  );
+  const maxFileCount = positiveLimit("MAX_ARCHIVE_FILES", 64 * 1024);
+  const maxPreviewBytes = positiveLimit("MAX_PREVIEW_BYTES", 16 * 1024 * 1024);
   const extract = tar.extract();
   const entries: ArchiveEntry[] = [];
   const contents = new Map<string, Buffer>();
+  const seen = new Set<string>();
+  let totalBytes = 0;
+  let previewBytes = 0;
   extract.on("entry", (header, stream, next) => {
-    const path = header.name.replace(/^\.\//, "").replaceAll("\\", "/");
-    const type: ArchiveEntry["type"] = header.type === "directory" ? "directory" : header.type === "symlink" ? "symlink" : "file";
-    entries.push({ path, size: header.size ?? 0, type, linkPath: header.linkname ?? undefined });
+    if (header.type === "directory" && [".", "./", "/"].includes(header.name)) {
+      stream.on("end", next);
+      stream.resume();
+      return;
+    }
+    const path = normalizeArchivePath(header.name);
+    const size = header.size ?? 0;
+    const allowedType =
+      header.type === "file" ||
+      header.type === "directory" ||
+      header.type === "symlink";
+    const type: ArchiveEntry["type"] =
+      header.type === "directory"
+        ? "directory"
+        : header.type === "symlink"
+          ? "symlink"
+          : "file";
+    const linkPath = header.linkname ?? undefined;
+    const invalid =
+      !allowedType ||
+      !path ||
+      !Number.isSafeInteger(size) ||
+      size < 0 ||
+      seen.has(path) ||
+      (type === "symlink" &&
+        (!linkPath || !normalizeArchivePath(linkPath, true)));
+    totalBytes += size;
+    if (
+      invalid ||
+      entries.length + 1 > maxFileCount ||
+      totalBytes > maxUncompressedBytes
+    ) {
+      stream.resume();
+      const reason = !allowedType
+        ? `Unsupported archive entry type: ${header.type}`
+        : !path
+          ? `Unsafe path: ${header.name}`
+          : seen.has(path)
+            ? `Duplicate path: ${header.name}`
+            : type === "symlink" &&
+                (!linkPath || !normalizeArchivePath(linkPath, true))
+              ? `Unsafe symlink: ${header.name}`
+              : entries.length + 1 > maxFileCount
+                ? "Archive exceeds file count limit"
+                : "Archive exceeds uncompressed size limit";
+      extract.destroy(new InvalidArchiveError(reason));
+      return;
+    }
+    seen.add(path);
+    entries.push({ path, size, type, linkPath });
+    const essential = ["pubspec.yaml", "README.md", "CHANGELOG.md"].includes(
+      path,
+    );
+    if (path === "pubspec.yaml" && size > 1024 * 1024) {
+      stream.resume();
+      extract.destroy(
+        new InvalidArchiveError("pubspec.yaml exceeds the 1 MB safety limit."),
+      );
+      return;
+    }
+    const capture =
+      type === "file" &&
+      size <= 1024 * 1024 &&
+      (essential ||
+        (size <= 512_000 && previewBytes + size <= maxPreviewBytes));
+    if (capture && !essential) previewBytes += size;
     const chunks: Buffer[] = [];
-    stream.on("data", (chunk: Buffer) => chunks.push(chunk));
-    stream.on("end", () => { if (type === "file") contents.set(path, Buffer.concat(chunks)); next(); });
+    stream.on("data", (chunk: Buffer) => {
+      if (capture) chunks.push(chunk);
+    });
+    stream.on("end", () => {
+      if (capture) contents.set(path, Buffer.concat(chunks));
+      next();
+    });
     stream.resume();
   });
-  await pipeline(Readable.from(buffer), createGunzip(), extract);
-  const validation = validateArchiveIndex(entries, {
-    maxUncompressedBytes: Number(process.env.MAX_UNCOMPRESSED_BYTES ?? 256 * 1024 * 1024),
-    maxFileCount: Number(process.env.MAX_ARCHIVE_FILES ?? 64 * 1024)
+  const compressedHash = createHash("sha256");
+  let compressedBytes = 0;
+  const compressedLimiter = new Transform({
+    transform(chunk: Buffer, _encoding, callback) {
+      compressedBytes += chunk.length;
+      if (compressedBytes > maxArchiveBytes) {
+        callback(
+          new InvalidArchiveError(
+            `Package archive exceeds compressed size limit (${maxArchiveBytes} bytes).`,
+          ),
+        );
+        return;
+      }
+      compressedHash.update(chunk);
+      callback(null, chunk);
+    },
   });
-  if (!validation.valid) throw new Error(validation.errors.join("; "));
+  try {
+    await pipeline(
+      Buffer.isBuffer(source)
+        ? Readable.from(source)
+        : createReadStream(source),
+      compressedLimiter,
+      createGunzip(),
+      extract,
+    );
+  } catch (error) {
+    if (error instanceof InvalidArchiveError) throw error;
+    if (!Buffer.isBuffer(source) && isFileSystemError(error)) throw error;
+    throw new InvalidArchiveError("The package archive is not a valid tar.gz.");
+  }
+  if (compressedBytes === 0)
+    throw new InvalidArchiveError("Package archive is empty.");
+  const validation = validateArchiveIndex(entries, {
+    maxUncompressedBytes,
+    maxFileCount,
+  });
+  if (!validation.valid)
+    throw new InvalidArchiveError(validation.errors.join("; "));
 
   const pubspecBuffer = contents.get("pubspec.yaml");
-  if (!pubspecBuffer) throw new Error("Archive does not contain pubspec.yaml at its root.");
-  const pubspec = parseYaml(pubspecBuffer.toString("utf8")) as Record<string, unknown>;
+  if (!pubspecBuffer)
+    throw new InvalidArchiveError(
+      "Archive does not contain pubspec.yaml at its root.",
+    );
+  let pubspecValue: unknown;
+  try {
+    pubspecValue = parseYaml(pubspecBuffer.toString("utf8"));
+  } catch {
+    throw new InvalidArchiveError("pubspec.yaml is not valid YAML.");
+  }
+  if (
+    !pubspecValue ||
+    typeof pubspecValue !== "object" ||
+    Array.isArray(pubspecValue)
+  )
+    throw new InvalidArchiveError("pubspec.yaml must contain a YAML mapping.");
+  const pubspec = pubspecValue as Record<string, unknown>;
   const name = String(pubspec.name ?? "");
   const version = String(pubspec.version ?? "");
-  if (!/^[a-z][a-z0-9_]*$/.test(name)) throw new Error("pubspec.yaml contains an invalid package name.");
-  if (!semver.valid(version)) throw new Error("pubspec.yaml contains an invalid semantic version.");
+  if (!/^[a-z][a-z0-9_]*$/.test(name))
+    throw new InvalidArchiveError(
+      "pubspec.yaml contains an invalid package name.",
+    );
+  if (!semver.valid(version))
+    throw new InvalidArchiveError(
+      "pubspec.yaml contains an invalid semantic version.",
+    );
   const environment = objectValue(pubspec.environment);
   const dartConstraint = String(environment.sdk ?? "");
-  if (!dartConstraint) throw new Error("pubspec.yaml must declare environment.sdk.");
-  const flutterConstraint = environment.flutter ? String(environment.flutter) : null;
+  if (!dartConstraint)
+    throw new InvalidArchiveError("pubspec.yaml must declare environment.sdk.");
+  const flutterConstraint = environment.flutter
+    ? String(environment.flutter)
+    : null;
 
-  const dependencies = (["dependencies", "dev_dependencies", "dependency_overrides"] as const).flatMap((scope) =>
-    Object.entries(objectValue(pubspec[scope])).map(([dependencyName, value]) => parseDependency(dependencyName, value, scope))
+  const dependencies = (
+    ["dependencies", "dev_dependencies", "dependency_overrides"] as const
+  ).flatMap((scope) =>
+    Object.entries(objectValue(pubspec[scope])).map(([dependencyName, value]) =>
+      parseDependency(dependencyName, value, scope),
+    ),
   );
-  const files = entries.filter((entry) => entry.path).map<PackageFile>((entry) => {
-    const content = contents.get(entry.path);
-    const language = languageFor(entry.path);
-    const isText = Boolean(content) && language !== "image" && content!.length <= 512_000;
-    return {
-      path: entry.type === "directory" && !entry.path.endsWith("/") ? `${entry.path}/` : entry.path,
-      type: entry.type === "directory" ? "dir" : "file",
-      size: entry.size,
-      language,
-      preview: entry.type === "directory" ? undefined : language === "markdown" ? "markdown" : language === "yaml" || language === "json" ? "structured" : language === "image" ? "image" : isText ? "code" : "unsupported",
-      content: isText ? content!.toString("utf8") : undefined
-    };
-  });
+  const files = entries
+    .filter((entry) => entry.path)
+    .map<PackageFile>((entry) => {
+      const content = contents.get(entry.path);
+      const language = languageFor(entry.path);
+      const isText =
+        Boolean(content) && language !== "image" && content!.length <= 512_000;
+      return {
+        path:
+          entry.type === "directory" && !entry.path.endsWith("/")
+            ? `${entry.path}/`
+            : entry.path,
+        type: entry.type === "directory" ? "dir" : "file",
+        size: entry.size,
+        language,
+        preview:
+          entry.type === "directory"
+            ? undefined
+            : language === "markdown"
+              ? "markdown"
+              : language === "yaml" || language === "json"
+                ? "structured"
+                : language === "image"
+                  ? "image"
+                  : isText
+                    ? "code"
+                    : "unsupported",
+        content: isText ? content!.toString("utf8") : undefined,
+      };
+    });
   return {
     name,
     version,
@@ -111,24 +304,89 @@ export async function parsePackageArchive(buffer: Buffer): Promise<ParsedPackage
     dartConstraint,
     dartMinimum: minimumVersion(dartConstraint),
     flutterConstraint,
-    flutterMinimum: flutterConstraint ? minimumVersion(flutterConstraint) : null,
+    flutterMinimum: flutterConstraint
+      ? minimumVersion(flutterConstraint)
+      : null,
     readme: contents.get("README.md")?.toString("utf8") ?? `# ${name}`,
-    changelog: contents.get("CHANGELOG.md")?.toString("utf8") ?? "# Changelog\n\nNo changelog was included.",
-    sha256: archiveSha256(buffer),
+    changelog:
+      contents.get("CHANGELOG.md")?.toString("utf8") ??
+      "# Changelog\n\nNo changelog was included.",
+    sha256: compressedHash.digest("hex"),
     files,
-    dependencies
+    dependencies,
   };
 }
 
-function objectValue(value: unknown): Record<string, unknown> { return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {}; }
-function minimumVersion(constraint: string) { return constraint.match(/\d+\.\d+\.\d+/)?.[0] ?? constraint; }
-function parseDependency(name: string, value: unknown, scope: ParsedDependency["scope"]): ParsedDependency {
-  if (typeof value === "string") return { name, constraint: value, scope, source: "hosted" };
+function positiveLimit(name: string, fallback: number) {
+  const value = Number(process.env[name] ?? fallback);
+  if (!Number.isSafeInteger(value) || value <= 0)
+    throw new Error(`${name} must be a positive integer.`);
+  return value;
+}
+
+function isFileSystemError(error: unknown) {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    ["ENOENT", "EACCES", "EPERM", "EISDIR"].includes(String(error.code))
+  );
+}
+
+function normalizeArchivePath(value: string, allowRelativeTarget = false) {
+  const replaced = value.replaceAll("\\", "/").replace(/^\.\//, "");
+  if (
+    !replaced ||
+    replaced.includes("\0") ||
+    replaced.startsWith("/") ||
+    /^[a-zA-Z]:\//.test(replaced)
+  )
+    return null;
+  const parts = replaced.split("/");
+  if (parts.includes("..")) return null;
+  const normalized = parts.filter((part) => part && part !== ".").join("/");
+  if (!normalized && !allowRelativeTarget) return null;
+  return normalized || null;
+}
+
+function objectValue(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+function minimumVersion(constraint: string) {
+  return constraint.match(/\d+\.\d+\.\d+/)?.[0] ?? constraint;
+}
+function parseDependency(
+  name: string,
+  value: unknown,
+  scope: ParsedDependency["scope"],
+): ParsedDependency {
+  if (typeof value === "string")
+    return { name, constraint: value, scope, source: "hosted" };
   const config = objectValue(value);
-  if (config.sdk) return { name, constraint: String(config.sdk).toUpperCase(), scope, source: "sdk" };
-  if (config.git) return { name, constraint: String(config.version ?? "git"), scope, source: "git" };
-  if (config.path) return { name, constraint: String(config.path), scope, source: "path" };
-  return { name, constraint: String(config.version ?? "any"), scope, source: "hosted" };
+  if (config.sdk)
+    return {
+      name,
+      constraint: String(config.sdk).toUpperCase(),
+      scope,
+      source: "sdk",
+    };
+  if (config.git)
+    return {
+      name,
+      constraint: String(config.version ?? "git"),
+      scope,
+      source: "git",
+    };
+  if (config.path)
+    return { name, constraint: String(config.path), scope, source: "path" };
+  return {
+    name,
+    constraint: String(config.version ?? "any"),
+    scope,
+    source: "hosted",
+  };
 }
 function languageFor(path: string) {
   const lower = path.toLowerCase();

@@ -98,6 +98,15 @@ describe("registry API", () => {
       analyzedVersions: 9,
     });
   });
+  it("rejects unsafe cross-origin state changes", async () => {
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/auth/logout",
+      headers: { origin: "https://attacker.example" },
+    });
+    expect(response.statusCode).toBe(403);
+    expect(response.json().error).toBe("origin_rejected");
+  });
   it("creates and lists user accounts without exposing password hashes", async () => {
     const username = `developer_${Date.now()}`;
     const created = await app.inject({
@@ -384,7 +393,7 @@ describe("registry API", () => {
       else process.env.MAX_PENDING_UPLOAD_SESSIONS = previousLimit;
     }
   });
-  it("records the account that published each version of the same package", async () => {
+  it("prevents another account from publishing an owned package", async () => {
     const repository = new DemoRegistryRepository();
     await repository.initialize();
     const firstArchive = readFileSync(
@@ -397,21 +406,27 @@ describe("registry API", () => {
       id: "account-alice",
       username: "alice",
     });
+    await expect(
+      repository.publishArchive(
+        archiveWithVersion(firstArchive, "1.0.0", "1.1.0"),
+        { id: "account-bob", username: "bob" },
+      ),
+    ).rejects.toMatchObject({ statusCode: 403 });
     await repository.publishArchive(
       archiveWithVersion(firstArchive, "1.0.0", "1.1.0"),
-      { id: "account-bob", username: "bob" },
+      { id: "account-alice", username: "alice" },
     );
 
     const detail = await repository.getPackage("sample_package");
     expect(detail?.versions).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ version: "1.0.0", publishedBy: "alice" }),
-        expect.objectContaining({ version: "1.1.0", publishedBy: "bob" }),
+        expect.objectContaining({ version: "1.1.0", publishedBy: "alice" }),
       ]),
     );
-    expect(detail?.latestVersion.publishedBy).toBe("bob");
+    expect(detail?.latestVersion.publishedBy).toBe("alice");
   });
-  it("uses the forwarded HTTPS origin behind Cloudflare or another trusted proxy", async () => {
+  it("ignores forwarded origin headers from an untrusted client", async () => {
     const response = await app.inject({
       method: "GET",
       url: "/api/packages/versions/new",
@@ -424,7 +439,7 @@ describe("registry API", () => {
     });
     expect(response.statusCode).toBe(200);
     expect(response.json().url).toMatch(
-      /^https:\/\/registry\.example\.internal\/api\/uploads\//,
+      /^http:\/\/127\.0\.0\.1:4000\/api\/uploads\//,
     );
   });
   it("restores published archives after a repository restart", async () => {
@@ -492,6 +507,24 @@ describe("archive validation", () => {
       ]).valid,
     ).toBe(true);
   });
+  it("normalizes duplicate paths and rejects Windows traversal", () => {
+    const result = validateArchiveIndex([
+      { path: "lib//main.dart", size: 1, type: "file" },
+      { path: "lib/main.dart", size: 1, type: "file" },
+      {
+        path: "lib/current",
+        size: 0,
+        type: "symlink",
+        linkPath: "..\\..\\secret",
+      },
+    ]);
+    expect(result.errors).toEqual(
+      expect.arrayContaining([
+        "Duplicate path: lib/main.dart",
+        "Unsafe symlink: lib/current",
+      ]),
+    );
+  });
   it("matches pub.dev limits without an arbitrary per-file 10 MB cap", () => {
     const largeGeneratedFile = validateArchiveIndex([
       {
@@ -522,6 +555,22 @@ describe("password security", () => {
 });
 
 describe("personal access tokens", () => {
+  it("cannot grant scopes that the issuer does not have", async () => {
+    const repository = new DemoRegistryRepository();
+    await expect(
+      issueToken(
+        repository,
+        {
+          name: "escalation-attempt",
+          scopes: ["packages:admin"],
+          expiresInDays: 30,
+        },
+        "account-1",
+        ["packages:read", "tokens:write"],
+      ),
+    ).rejects.toMatchObject({ statusCode: 403 });
+  });
+
   it("allows an account token without an expiration date", async () => {
     const previousPepper = process.env.TOKEN_PEPPER;
     process.env.TOKEN_PEPPER = "test-pepper";
@@ -531,6 +580,7 @@ describe("personal access tokens", () => {
         repository,
         { name: "long-lived", scopes: ["packages:read"], expiresInDays: null },
         "account-1",
+        ["packages:read"],
       );
       expect(created.expiresAt).toBeNull();
       await expect(

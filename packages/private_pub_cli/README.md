@@ -65,6 +65,8 @@ private_pub versions company_ui
 ```
 
 Use `--token-env NAME` if your token is stored in another environment variable.
+The CLI refuses to send bearer tokens over plain HTTP except to loopback hosts;
+use HTTPS for every shared or remote registry.
 
 ## Commands
 

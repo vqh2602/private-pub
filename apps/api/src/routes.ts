@@ -1,5 +1,12 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import type { MultipartFile } from "@fastify/multipart";
 import { randomUUID } from "node:crypto";
+import { createReadStream, createWriteStream } from "node:fs";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { Transform } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import {
   createAccountSchema,
   importRequestSchema,
@@ -13,10 +20,13 @@ import {
   hashSecret,
   issueToken,
   newSession,
+  optionalAuthentication,
   requireScopes,
+  repositoryActor,
   sessionCookieName,
 } from "./security.js";
 import { hashPassword, verifyPassword } from "./password.js";
+import { InvalidArchiveError } from "./archive.js";
 
 const nameParams = z.object({ name: z.string() });
 const versionParams = nameParams.extend({ version: z.string() });
@@ -48,15 +58,11 @@ function sessionCookieOptions(expiresAt?: string) {
   };
 }
 
-function hostedVersion(
-  request: FastifyRequest,
-  name: string,
-  item: PackageVersion,
-) {
+function hostedVersion(baseUrl: string, name: string, item: PackageVersion) {
   return {
     version: item.version,
     pubspec: item.pubspec,
-    archive_url: `${request.protocol}://${request.host}/api/packages/${name}/versions/${item.version}.tar.gz`,
+    archive_url: `${baseUrl}/api/packages/${encodeURIComponent(name)}/versions/${encodeURIComponent(item.version)}.tar.gz`,
     archive_sha256: item.archiveSha256,
     published: item.publishedAt,
     retracted: Boolean(item.retractedAt),
@@ -72,7 +78,8 @@ export async function registerRoutes(
     {
       actor: PublishActor;
       createdAt: number;
-      archive?: Buffer;
+      archivePath?: string;
+      temporaryDirectory?: string;
       filename?: string;
       uploadedAt?: string;
     }
@@ -85,13 +92,47 @@ export async function registerRoutes(
     process.env.MAX_PENDING_UPLOAD_SESSIONS,
     20,
   );
-  const prunePendingUploads = () => {
+  const maxPendingUploadSessionsPerActor = positiveNumber(
+    process.env.MAX_PENDING_UPLOAD_SESSIONS_PER_ACTOR,
+    Math.min(3, maxPendingUploadSessions),
+  );
+  const prunePendingUploads = async () => {
     const oldestAllowed = Date.now() - uploadSessionTtlMs;
-    for (const [id, upload] of pendingUploads)
-      if (upload.createdAt < oldestAllowed) pendingUploads.delete(id);
+    for (const [id, upload] of pendingUploads) {
+      if (upload.createdAt >= oldestAllowed) continue;
+      pendingUploads.delete(id);
+      if (upload.temporaryDirectory)
+        await rm(upload.temporaryDirectory, { recursive: true, force: true });
+    }
   };
+  app.addHook("onClose", async () => {
+    await Promise.all(
+      [...pendingUploads.values()].map((upload) =>
+        upload.temporaryDirectory
+          ? rm(upload.temporaryDirectory, { recursive: true, force: true })
+          : Promise.resolve(),
+      ),
+    );
+    pendingUploads.clear();
+  });
   const scopes = (...required: Parameters<typeof requireScopes>[1][]) =>
     requireScopes(repository, ...required);
+  const optionalAuth = optionalAuthentication(repository);
+  const canReadPackage = async (
+    request: FastifyRequest,
+    reply: FastifyReply,
+    name: string,
+  ) => {
+    if (await repository.canReadPackage(name, repositoryActor(request.actor)))
+      return true;
+    reply.code(404).send({ error: "not_found" });
+    return false;
+  };
+  const baseUrl = (request: FastifyRequest) =>
+    (
+      process.env.PUBLIC_BASE_URL ?? `${request.protocol}://${request.host}`
+    ).replace(/\/$/, "");
+  const dummyPasswordHash = await hashPassword(randomUUID());
   app.get("/health", async () => ({
     status: "ok",
     mode: repository.mode,
@@ -104,10 +145,11 @@ export async function registerRoutes(
     async (request, reply) => {
       const input = loginSchema.parse(request.body);
       const account = await repository.findAccountByUsername(input.username);
-      if (
-        !account?.isActive ||
-        !(await verifyPassword(input.password, account.passwordHash))
-      )
+      const passwordMatches = await verifyPassword(
+        input.password,
+        account?.passwordHash ?? dummyPasswordHash,
+      );
+      if (!account?.isActive || !passwordMatches)
         return reply.code(401).send({
           error: "invalid_credentials",
           message: "Username or password is incorrect.",
@@ -191,8 +233,9 @@ export async function registerRoutes(
     { preHandler: scopes("packages:admin") },
     async (request, reply) => {
       if (
-        request.actor!.role !== "admin" &&
-        request.actor!.role !== "super_admin"
+        request.actor!.authType === "token" ||
+        (request.actor!.role !== "admin" &&
+          request.actor!.role !== "super_admin")
       )
         return reply.code(403).send({ error: "admin_required" });
       const accounts = await repository.listAccounts();
@@ -209,8 +252,9 @@ export async function registerRoutes(
     { preHandler: scopes("packages:admin") },
     async (request, reply) => {
       if (
-        request.actor!.role !== "admin" &&
-        request.actor!.role !== "super_admin"
+        request.actor!.authType === "token" ||
+        (request.actor!.role !== "admin" &&
+          request.actor!.role !== "super_admin")
       )
         return reply.code(403).send({ error: "admin_required" });
       const input = createAccountSchema.parse(request.body);
@@ -238,67 +282,88 @@ export async function registerRoutes(
   );
 
   // Hosted Pub Repository API V2 read surface.
-  app.get("/api/packages/:name", async (request, reply) => {
-    const { name } = nameParams.parse(request.params);
-    const metadata = await repository.getPackageMetadata(name);
-    if (!metadata)
-      return reply
-        .code(404)
-        .type(hostedContentType)
-        .send({
-          error: {
-            code: "not_found",
-            message: `Package ${name} was not found.`,
-          },
-        });
-    const versions = metadata.versions.map((item) =>
-      hostedVersion(request, name, item),
-    );
-    const latest =
-      versions.find(
-        (item) => item.version === metadata.latestVersion.version,
-      ) ?? versions[0];
-    return reply.type(hostedContentType).send({
-      name,
-      latest,
-      versions,
-      ...(metadata.isDiscontinued ? { isDiscontinued: true } : {}),
-    });
-  });
+  app.get(
+    "/api/packages/:name",
+    { preHandler: optionalAuth },
+    async (request, reply) => {
+      const { name } = nameParams.parse(request.params);
+      if (!(await canReadPackage(request, reply, name))) return;
+      const metadata = await repository.getPackageMetadata(name);
+      if (!metadata)
+        return reply
+          .code(404)
+          .type(hostedContentType)
+          .send({
+            error: {
+              code: "not_found",
+              message: `Package ${name} was not found.`,
+            },
+          });
+      const versions = metadata.versions.map((item) =>
+        hostedVersion(baseUrl(request), name, item),
+      );
+      const latest =
+        versions.find(
+          (item) => item.version === metadata.latestVersion.version,
+        ) ?? versions[0];
+      return reply.type(hostedContentType).send({
+        name,
+        latest,
+        versions,
+        ...(metadata.isDiscontinued ? { isDiscontinued: true } : {}),
+      });
+    },
+  );
 
-  app.get("/api/packages/:name/versions/:version", async (request, reply) => {
-    const { name, version } = versionParams.parse(request.params);
-    const item = await repository.getVersion(name, version);
-    if (!item)
+  app.get(
+    "/api/packages/:name/versions/:version",
+    { preHandler: optionalAuth },
+    async (request, reply) => {
+      const { name, version } = versionParams.parse(request.params);
+      if (!(await canReadPackage(request, reply, name))) return;
+      const item = await repository.getVersion(name, version);
+      if (!item)
+        return reply
+          .code(404)
+          .type(hostedContentType)
+          .send({
+            error: {
+              code: "not_found",
+              message: "Package version was not found.",
+            },
+          });
       return reply
-        .code(404)
         .type(hostedContentType)
-        .send({
-          error: {
-            code: "not_found",
-            message: "Package version was not found.",
-          },
-        });
-    return reply
-      .type(hostedContentType)
-      .send(hostedVersion(request, name, item));
-  });
+        .send(hostedVersion(baseUrl(request), name, item));
+    },
+  );
 
   app.get(
     "/api/packages/:name/versions/:version.tar.gz",
+    { preHandler: optionalAuth },
     async (request, reply) => {
       const { name, version } = versionParams.parse(request.params);
+      if (!(await canReadPackage(request, reply, name))) return;
       if (!(await repository.getVersion(name, version)))
         return reply.code(404).send({
           error: { code: "not_found", message: "Archive was not found." },
         });
+      const archivePath = await repository.getArchivePath?.(name, version);
+      if (archivePath)
+        return reply
+          .type("application/octet-stream")
+          .header(
+            "Content-Disposition",
+            `attachment; filename="${safeDownloadName(name)}-${safeDownloadName(version)}.tar.gz"`,
+          )
+          .send(createReadStream(archivePath));
       const archive = await repository.getArchive(name, version);
       if (archive)
         return reply
           .type("application/octet-stream")
           .header(
             "Content-Disposition",
-            `attachment; filename="${name}-${version}.tar.gz"`,
+            `attachment; filename="${safeDownloadName(name)}-${safeDownloadName(version)}.tar.gz"`,
           )
           .send(archive);
       return reply.code(501).send({
@@ -312,21 +377,42 @@ export async function registerRoutes(
   );
 
   const startUpload = async (request: FastifyRequest, reply: FastifyReply) => {
-    prunePendingUploads();
+    await prunePendingUploads();
     if (pendingUploads.size >= maxPendingUploadSessions)
-      return reply.code(503).type(hostedContentType).send({
-        error: {
-          code: "upload_capacity_reached",
-          message: "Too many uploads are pending. Retry shortly.",
-        },
-      });
+      return reply
+        .code(503)
+        .type(hostedContentType)
+        .send({
+          error: {
+            code: "upload_capacity_reached",
+            message: "Too many uploads are pending. Retry shortly.",
+          },
+        });
+    const actorPendingUploads = [...pendingUploads.values()].filter(
+      (upload) => upload.actor.id === request.actor!.id,
+    ).length;
+    if (actorPendingUploads >= maxPendingUploadSessionsPerActor)
+      return reply
+        .code(429)
+        .type(hostedContentType)
+        .send({
+          error: {
+            code: "upload_actor_capacity_reached",
+            message:
+              "This account has too many pending uploads. Finish one or retry after it expires.",
+          },
+        });
     const uploadId = randomUUID();
     pendingUploads.set(uploadId, {
-      actor: { id: request.actor!.id, username: request.actor!.username },
+      actor: {
+        id: request.actor!.id,
+        username: request.actor!.username,
+        role: request.actor!.role,
+      },
       createdAt: Date.now(),
     });
     return reply.type(hostedContentType).send({
-      url: `${request.protocol}://${request.host}/api/uploads/${uploadId}`,
+      url: `${baseUrl(request)}/api/uploads/${uploadId}`,
       fields: { uploadId },
     });
   };
@@ -346,7 +432,7 @@ export async function registerRoutes(
     "/api/uploads/:uploadId",
     { preHandler: scopes("packages:publish") },
     async (request, reply) => {
-      prunePendingUploads();
+      await prunePendingUploads();
       const { uploadId } = request.params as { uploadId: string };
       const pending = pendingUploads.get(uploadId);
       if (!pending)
@@ -369,6 +455,16 @@ export async function registerRoutes(
               message: "This upload session belongs to another account.",
             },
           });
+      if (pending.archivePath)
+        return reply
+          .code(409)
+          .type(hostedContentType)
+          .send({
+            error: {
+              code: "archive_already_uploaded",
+              message: "This upload session already contains an archive.",
+            },
+          });
       const file = await request.file();
       if (!file)
         return reply
@@ -381,10 +477,37 @@ export async function registerRoutes(
                 "Expected multipart field 'file' containing a .tar.gz archive.",
             },
           });
-      pending.archive = await file.toBuffer();
-      pending.filename = file.filename;
-      pending.uploadedAt = new Date().toISOString();
-      const finalizeUrl = `${request.protocol}://${request.host}/api/packages/versions/newUploadFinish?uploadId=${uploadId}`;
+      try {
+        const temporary = await saveMultipartUpload(file);
+        pending.archivePath = temporary.path;
+        pending.temporaryDirectory = temporary.directory;
+        pending.filename = file.filename;
+        pending.uploadedAt = new Date().toISOString();
+      } catch (error) {
+        const statusCode = (error as { statusCode?: number }).statusCode;
+        if (statusCode !== 413) {
+          request.log.error({ err: error }, "Could not persist upload");
+          return reply
+            .code(500)
+            .type(hostedContentType)
+            .send({
+              error: {
+                code: "upload_failed",
+                message: "The upload could not be stored.",
+              },
+            });
+        }
+        return reply
+          .code(413)
+          .type(hostedContentType)
+          .send({
+            error: {
+              code: "archive_too_large",
+              message: "The package archive exceeds the upload size limit.",
+            },
+          });
+      }
+      const finalizeUrl = `${baseUrl(request)}/api/packages/versions/newUploadFinish?uploadId=${uploadId}`;
       return reply.header("Location", finalizeUrl).code(204).send();
     },
   );
@@ -393,12 +516,12 @@ export async function registerRoutes(
     "/api/packages/versions/newUploadFinish",
     { preHandler: scopes("packages:publish") },
     async (request, reply) => {
-      prunePendingUploads();
+      await prunePendingUploads();
       const uploadId = String(
         (request.query as { uploadId?: string }).uploadId ?? "",
       );
       const pending = pendingUploads.get(uploadId);
-      if (!pending?.archive)
+      if (!pending?.archivePath)
         return reply
           .code(400)
           .type(hostedContentType)
@@ -421,10 +544,15 @@ export async function registerRoutes(
           });
       try {
         const published = await repository.publishArchive(
-          pending.archive,
+          pending.archivePath,
           pending.actor,
         );
         pendingUploads.delete(uploadId);
+        if (pending.temporaryDirectory)
+          await rm(pending.temporaryDirectory, {
+            recursive: true,
+            force: true,
+          });
         return reply.type(hostedContentType).send({
           success: {
             message: `Published ${published.name} ${published.version} successfully; analysis has been queued.`,
@@ -432,18 +560,25 @@ export async function registerRoutes(
         });
       } catch (error) {
         pendingUploads.delete(uploadId);
-        const message =
-          error instanceof Error
-            ? error.message
-            : "The uploaded archive could not be published.";
-        request.log.warn(
-          { uploadId, error: message },
+        if (pending.temporaryDirectory)
+          await rm(pending.temporaryDirectory, {
+            recursive: true,
+            force: true,
+          });
+        const failure = publishFailure(error);
+        request.log[failure.statusCode >= 500 ? "error" : "warn"](
+          { uploadId, err: error },
           "Package finalization rejected the uploaded archive",
         );
         return reply
-          .code(400)
+          .code(failure.statusCode)
           .type(hostedContentType)
-          .send({ error: { code: "invalid_archive", message } });
+          .send({
+            error: {
+              code: failure.code,
+              message: failure.message,
+            },
+          });
       }
     },
   );
@@ -451,9 +586,13 @@ export async function registerRoutes(
   // Private control-plane API.
   app.get("/v1/stats", async () => repository.getStats());
 
-  app.get("/v1/search", async (request) => {
+  app.get("/v1/search", { preHandler: optionalAuth }, async (request) => {
     const query = searchQuerySchema.parse(request.query);
-    const result = await repository.search(query.q, query);
+    const result = await repository.search(
+      query.q,
+      query,
+      repositoryActor(request.actor),
+    );
     return {
       items: result.items,
       total: result.total,
@@ -477,45 +616,62 @@ export async function registerRoutes(
     },
   );
 
-  app.get("/v1/packages/:name", async (request, reply) => {
-    const { name } = nameParams.parse(request.params);
-    const options = packageDetailQuery.parse(request.query);
-    const detail = await repository.getPackage(name, options);
-    return (
-      detail ??
-      reply
-        .code(404)
-        .send({ error: "not_found", message: `Package ${name} was not found.` })
-    );
-  });
-  app.get("/v1/packages/:name/versions/:version", async (request, reply) => {
-    const { name, version } = versionParams.parse(request.params);
-    return (
-      (await repository.getVersion(name, version)) ??
-      reply.code(404).send({ error: "not_found" })
-    );
-  });
   app.get(
-    "/v1/packages/:name/versions/:version/files",
+    "/v1/packages/:name",
+    { preHandler: optionalAuth },
+    async (request, reply) => {
+      const { name } = nameParams.parse(request.params);
+      if (!(await canReadPackage(request, reply, name))) return;
+      const options = packageDetailQuery.parse(request.query);
+      const detail = await repository.getPackage(name, options);
+      return (
+        detail ??
+        reply.code(404).send({
+          error: "not_found",
+          message: `Package ${name} was not found.`,
+        })
+      );
+    },
+  );
+  app.get(
+    "/v1/packages/:name/versions/:version",
+    { preHandler: optionalAuth },
     async (request, reply) => {
       const { name, version } = versionParams.parse(request.params);
+      if (!(await canReadPackage(request, reply, name))) return;
+      return (
+        (await repository.getVersion(name, version)) ??
+        reply.code(404).send({ error: "not_found" })
+      );
+    },
+  );
+  app.get(
+    "/v1/packages/:name/versions/:version/files",
+    { preHandler: optionalAuth },
+    async (request, reply) => {
+      const { name, version } = versionParams.parse(request.params);
+      if (!(await canReadPackage(request, reply, name))) return;
+      const entries = await repository.getFiles(name, version, {
+        includeContent: false,
+      });
+      if (!entries) return reply.code(404).send({ error: "not_found" });
       return {
         package: name,
         version,
-        entries:
-          (await repository.getFiles(name, version)) ??
-          reply.code(404).send({ error: "not_found" }),
+        entries,
       };
     },
   );
   app.get(
     "/v1/packages/:name/versions/:version/files/*",
+    { preHandler: optionalAuth },
     async (request, reply) => {
       const params = request.params as {
         name: string;
         version: string;
         "*": string;
       };
+      if (!(await canReadPackage(request, reply, params.name))) return;
       return (
         (await repository.getFile(params.name, params.version, params["*"])) ??
         reply.code(404).send({ error: "not_found" })
@@ -524,8 +680,10 @@ export async function registerRoutes(
   );
   app.get(
     "/v1/packages/:name/versions/:version/score",
+    { preHandler: optionalAuth },
     async (request, reply) => {
       const { name, version } = versionParams.parse(request.params);
+      if (!(await canReadPackage(request, reply, name))) return;
       return (
         (await repository.getScore(name, version)) ??
         reply.code(404).send({ error: "not_found" })
@@ -563,11 +721,14 @@ export async function registerRoutes(
           message: "File import phải có định dạng .tar.gz.",
         });
       }
+      let temporary: { path: string; directory: string } | undefined;
       try {
-        const published = await repository.publishArchive(
-          await file.toBuffer(),
-          { id: request.actor!.id, username: request.actor!.username },
-        );
+        temporary = await saveMultipartUpload(file);
+        const published = await repository.publishArchive(temporary.path, {
+          id: request.actor!.id,
+          username: request.actor!.username,
+          role: request.actor!.role,
+        });
         const action = published.packageCreated
           ? "package_created"
           : "version_added";
@@ -580,28 +741,36 @@ export async function registerRoutes(
             : `Đã xác minh và thêm version ${published.version} vào package ${published.name}.`,
         });
       } catch (error) {
-        const message =
-          error instanceof Error
-            ? error.message
-            : "Không thể xác minh package archive.";
-        const statusCode =
-          typeof (error as { statusCode?: unknown })?.statusCode === "number"
-            ? (error as { statusCode: number }).statusCode
-            : undefined;
-        if (statusCode === 413)
+        const failure = publishFailure(error);
+        if (failure.statusCode === 413)
           return reply.code(413).send({
             error: "archive_too_large",
             message: "File package vượt quá giới hạn upload cho phép.",
           });
-        const duplicate = /already exists/i.test(message);
-        request.log.warn(
-          { filename: file.filename, error: message },
+        if (failure.statusCode === 403)
+          return reply.code(403).send({
+            error: "package_permission_denied",
+            message: failure.message,
+          });
+        if (failure.statusCode === 409)
+          return reply.code(409).send({
+            error: "version_exists",
+            message: failure.message,
+          });
+        request.log[failure.statusCode >= 500 ? "error" : "warn"](
+          { filename: file.filename, err: error },
           "File import rejected",
         );
-        return reply.code(duplicate ? 409 : 400).send({
-          error: duplicate ? "version_exists" : "invalid_archive",
-          message,
+        return reply.code(failure.statusCode).send({
+          error: failure.code,
+          message:
+            failure.statusCode >= 500
+              ? "Không thể xuất bản package do lỗi máy chủ."
+              : failure.message,
         });
+      } finally {
+        if (temporary)
+          await rm(temporary.directory, { recursive: true, force: true });
       }
     },
   );
@@ -631,29 +800,44 @@ export async function registerRoutes(
     "/v1/tokens",
     { preHandler: scopes("tokens:write") },
     async (request, reply) => {
+      if (request.actor!.authType === "token")
+        return reply.code(403).send({
+          error: "session_required",
+          message: "Sign in with an account session to manage tokens.",
+        });
       const input = tokenRequestSchema.parse(request.body);
       return reply
         .code(201)
-        .send(await issueToken(repository, input, request.actor!.id));
+        .send(
+          await issueToken(
+            repository,
+            input,
+            request.actor!.id,
+            request.actor!.scopes,
+          ),
+        );
     },
   );
   app.get(
     "/v1/tokens",
     { preHandler: scopes("tokens:write") },
-    async (request) => ({
-      items: await repository.listTokens(request.actor!.id),
-    }),
+    async (request, reply) =>
+      request.actor!.authType === "token"
+        ? reply.code(403).send({ error: "session_required" })
+        : { items: await repository.listTokens(request.actor!.id) },
   );
   app.delete(
     "/v1/tokens/:id",
     { preHandler: scopes("tokens:write") },
     async (request, reply) =>
-      (await repository.revokeToken(
-        (request.params as { id: string }).id,
-        request.actor!.id,
-      ))
-        ? reply.code(204).send()
-        : reply.code(404).send({ error: "not_found" }),
+      request.actor!.authType === "token"
+        ? reply.code(403).send({ error: "session_required" })
+        : (await repository.revokeToken(
+              (request.params as { id: string }).id,
+              request.actor!.id,
+            ))
+          ? reply.code(204).send()
+          : reply.code(404).send({ error: "not_found" }),
   );
 
   for (const [suffix, retracted] of [
@@ -693,4 +877,96 @@ export async function registerRoutes(
 function positiveNumber(value: string | undefined, fallback: number) {
   const parsed = Number(value ?? fallback);
   return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback;
+}
+
+function safeDownloadName(value: string) {
+  return value.replace(/[^a-zA-Z0-9._+-]/g, "_");
+}
+
+function publishFailure(error: unknown): {
+  statusCode: number;
+  code: string;
+  message: string;
+} {
+  if (error instanceof InvalidArchiveError)
+    return {
+      statusCode: 400,
+      code: "invalid_archive",
+      message: error.message,
+    };
+  const statusCode =
+    typeof (error as { statusCode?: unknown })?.statusCode === "number"
+      ? (error as { statusCode: number }).statusCode
+      : 500;
+  if (statusCode === 403)
+    return {
+      statusCode,
+      code: "package_permission_denied",
+      message:
+        error instanceof Error
+          ? error.message
+          : "The current account cannot publish this package.",
+    };
+  if (statusCode === 409)
+    return {
+      statusCode,
+      code: "version_exists",
+      message:
+        error instanceof Error
+          ? error.message
+          : "The package version already exists.",
+    };
+  if (statusCode === 413)
+    return {
+      statusCode,
+      code: "archive_too_large",
+      message: "The package archive exceeds the configured size limit.",
+    };
+  return {
+    statusCode: 500,
+    code: "internal_error",
+    message: "The package could not be published due to a server error.",
+  };
+}
+
+async function saveMultipartUpload(file: MultipartFile) {
+  const directory = await mkdtemp(join(tmpdir(), "private-pub-upload-"));
+  const path = join(directory, "archive.tar.gz");
+  const maxBytes = positiveNumber(
+    process.env.MAX_ARCHIVE_BYTES,
+    100 * 1024 * 1024,
+  );
+  let bytes = 0;
+  const limiter = new Transform({
+    transform(chunk: Buffer, _encoding, callback) {
+      bytes += chunk.length;
+      if (bytes > maxBytes) {
+        const error = new Error(
+          `Package archive exceeds compressed size limit (${maxBytes} bytes).`,
+        ) as Error & { statusCode?: number };
+        error.statusCode = 413;
+        callback(error);
+        return;
+      }
+      callback(null, chunk);
+    },
+  });
+  try {
+    await pipeline(
+      file.file,
+      limiter,
+      createWriteStream(path, { flags: "wx" }),
+    );
+    if (file.file.truncated) {
+      const error = new Error(
+        `Package archive exceeds compressed size limit (${maxBytes} bytes).`,
+      ) as Error & { statusCode?: number };
+      error.statusCode = 413;
+      throw error;
+    }
+    return { path, directory };
+  } catch (error) {
+    await rm(directory, { recursive: true, force: true });
+    throw error;
+  }
 }

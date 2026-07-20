@@ -4,6 +4,16 @@ import 'package:private_pub_cli/private_pub_cli.dart';
 import 'package:test/test.dart';
 
 void main() {
+  test('refuses bearer tokens over remote HTTP', () {
+    expect(
+      () => RegistryClient(
+        host: Uri.parse('http://pub.company.dev'),
+        token: 'secret',
+      ),
+      throwsA(isA<RegistryException>()),
+    );
+  });
+
   test('parses and sorts Hosted Pub V2 metadata', () async {
     final mock = MockClient((request) async {
       expect(request.url.toString(), 'https://pub.company.dev/api/packages/ui');
