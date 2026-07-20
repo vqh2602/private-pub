@@ -85,7 +85,7 @@ void main() {
       'name': 'private-pub-registry',
       'version': '0.1.0',
     });
-    expect((responses[1]['result'] as Map)['tools'], hasLength(4));
+    expect((responses[1]['result'] as Map)['tools'], hasLength(8));
     final toolResult = (responses[2]['result'] as Map)['content'] as List;
     expect((toolResult.single as Map)['text'], contains('company_ui'));
     expect(requested.single.uri.path, '/v1/search');

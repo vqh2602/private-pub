@@ -42,12 +42,12 @@ final class CredentialStore {
     if (Platform.isWindows) {
       final appData = _environment['APPDATA'];
       if (appData != null && appData.isNotEmpty) {
-        return p.join(appData, 'private_pub', 'credentials.json');
+        return p.join(appData, 'ppub', 'credentials.json');
       }
     }
     final xdg = _environment['XDG_CONFIG_HOME'];
     if (xdg != null && xdg.isNotEmpty) {
-      return p.join(xdg, 'private_pub', 'credentials.json');
+      return p.join(xdg, 'ppub', 'credentials.json');
     }
     final home = _environment['HOME'] ?? _environment['USERPROFILE'];
     if (home == null || home.isEmpty) {
@@ -55,7 +55,7 @@ final class CredentialStore {
         'Cannot locate the user configuration directory.',
       );
     }
-    return p.join(home, '.config', 'private_pub', 'credentials.json');
+    return p.join(home, '.config', 'ppub', 'credentials.json');
   }
 
   Uri? get defaultHost {
@@ -145,12 +145,6 @@ final class CredentialStore {
 
   void setDefault(Uri host) {
     final canonical = normalizeRegistryHost(host);
-    if (get(canonical) == null) {
-      throw FileSystemException(
-        'No stored login for $canonical.',
-        filePath,
-      );
-    }
     final root = _read()..['defaultHost'] = canonical.toString();
     _write(root);
   }

@@ -5,6 +5,7 @@ import 'package:args/args.dart';
 import 'package:args/command_runner.dart' show UsageException;
 import 'package:path/path.dart' as p;
 import 'package:pub_semver/pub_semver.dart';
+import 'package:yaml_edit/yaml_edit.dart';
 
 import 'credentials.dart';
 import 'dependency_inspector.dart';
@@ -91,6 +92,12 @@ final class PrivatePubCli {
           return await _prepare(result, command);
         case 'mcp':
           return await _mcp(result, command);
+        case 'config':
+          return _config(result, command);
+        case 'add':
+          return await _add(result, command);
+        case 'global':
+          return await _global(result, command);
         default:
           throw UsageException('Unknown command: ${command.name}', _usage);
       }
@@ -197,9 +204,23 @@ final class PrivatePubCli {
           'setup',
           defaultsTo: true,
           help: 'Also register the OAuth token with fvm dart pub.',
+        )
+        ..addFlag(
+          'no-browser',
+          negatable: false,
+          help: 'Do not open the system browser.',
+        )
+        ..addOption(
+          'key',
+          help: 'Directly use a token instead of OAuth.',
         ),
     );
-    parser.addCommand('logout');
+    parser.addCommand(
+      'logout',
+      ArgParser()
+        ..addOption('server', help: 'Server host to log out from.')
+        ..addFlag('all', negatable: false, help: 'Log out from all servers.'),
+    );
     parser.addCommand(
       'setup',
       ArgParser()
@@ -229,19 +250,60 @@ final class PrivatePubCli {
         )
         ..addFlag('dry-run', abbr: 'n', negatable: false),
     );
-    parser.addCommand('mcp');
+    parser.addCommand(
+      'mcp',
+      ArgParser()
+        ..addOption('server', help: 'Server host.')
+        ..addOption('token', help: 'Bearer token/PAT.'),
+    );
+    final configParser = ArgParser();
+    configParser.addCommand('show');
+    configParser.addCommand('set-server');
+    parser.addCommand('config', configParser);
+    parser.addCommand('add');
+    final globalParser = ArgParser();
+    globalParser.addCommand('activate');
+    globalParser.addCommand('deactivate');
+    parser.addCommand('global', globalParser);
     return parser;
   }
 
   Future<int> _login(ArgResults global, ArgResults command) async {
     final host = _commandHost(global, command);
-    final client = OAuthLoginClient();
+    final noBrowser = command['no-browser'] == true;
+    final client = OAuthLoginClient(
+      browserOpener: noBrowser ? (uri) async => true : null,
+    );
     try {
-      _stdout.writeln('Opening a browser to authorize $host ...');
+      final key = command['key'] as String?;
+      if (key != null && key.isNotEmpty) {
+        _stdout.writeln('Validating key/token for $host ...');
+        final result = await client.validateToken(host, key);
+        _credentials.save(
+          host: host,
+          token: key,
+          username: result.username,
+        );
+        if (command['setup'] == true) {
+          await _pubTokens.registerToken(host, key);
+        }
+        _stdout.writeln(
+          'Logged in to $host${result.username == null ? '' : ' as ${result.username}'}.',
+        );
+        return 0;
+      }
+
+      if (noBrowser) {
+        _stdout.writeln('Please open the following authorization URL in your browser:');
+      } else {
+        _stdout.writeln('Opening a browser to authorize $host ...');
+      }
       final result = await client.loginWithBrowser(
         host,
         onAuthorizationUrl: (url) {
-          _stdout.writeln('If the browser does not open, visit:');
+          if (!noBrowser) {
+            _stdout.writeln('If the browser does not open, visit:');
+          }
           _stdout.writeln(url);
         },
       );
@@ -266,7 +328,22 @@ final class PrivatePubCli {
   }
 
   int _logout(ArgResults global, ArgResults command) {
-    final host = _commandHost(global, command, requireLogin: false);
+    if (command['all'] == true) {
+      final credentials = _credentials.list();
+      if (credentials.isEmpty) {
+        _stdout.writeln('No stored credentials found.');
+        return 0;
+      }
+      for (final cred in credentials) {
+        _credentials.remove(cred.host);
+        _stdout.writeln('Removed credentials for ${cred.host}');
+      }
+      _stdout.writeln('All stored credentials removed.');
+      return 0;
+    }
+
+    final server = command['server'] as String?;
+    final host = server != null ? _parseHost(server) : _commandHost(global, command, requireLogin: false);
     if (!_credentials.remove(host)) {
       _stdout.writeln('No stored login for $host.');
       return 0;
@@ -289,7 +366,7 @@ final class PrivatePubCli {
     final credential = _credentials.get(host);
     if (credential == null) {
       throw UsageException(
-          'Not logged in to $host. Run `private_pub login $host`.', _usage);
+          'Not logged in to $host. Run `ppub login $host`.', _usage);
     }
     await _pubTokens.registerToken(host, credential.token);
     _stdout.writeln('Registered the stored token with Dart Pub for $host.');
@@ -324,7 +401,7 @@ final class PrivatePubCli {
         return 0;
       }
       final staging =
-          await Directory.systemTemp.createTemp('private_pub_auto_');
+          await Directory.systemTemp.createTemp('ppub_auto_');
       try {
         for (final name in plan.order) {
           final output = p.join(staging.path, name);
@@ -349,7 +426,7 @@ final class PrivatePubCli {
 
     final package = _packageAt(directory);
     final staging =
-        await Directory.systemTemp.createTemp('private_pub_publish_');
+        await Directory.systemTemp.createTemp('ppub_publish_');
     try {
       final output = p.join(staging.path, package.name);
       await materializePackage(
@@ -386,7 +463,7 @@ final class PrivatePubCli {
       return 0;
     }
     final rawOutput = command['output'] as String? ??
-        p.join(directory, '.private_pub', 'prepare');
+        p.join(directory, '.ppub', 'prepare');
     final output =
         Directory(p.normalize(p.absolute(_workingDirectory, rawOutput)));
     if (output.existsSync()) {
@@ -409,19 +486,18 @@ final class PrivatePubCli {
   }
 
   Future<int> _mcp(ArgResults global, ArgResults command) async {
-    if (command.rest.isNotEmpty) {
-      throw UsageException('Usage: private_pub [--host URL] mcp', _usage);
-    }
-    final host = _commandHost(global, command);
-    final credential = _credential(global, host);
+    final serverVal = command['server'] as String?;
+    final host = serverVal != null ? _parseHost(serverVal) : _commandHost(global, command);
+    final tokenVal = command['token'] as String?;
+    final credential = tokenVal ?? _credential(global, host);
     if (credential == null || credential.isEmpty) {
       throw UsageException(
-        'No token is available for $host. Run `private_pub login $host` first.',
+        'No token is available for $host. Run `ppub login $host` first.',
         _usage,
       );
     }
     final client = RegistryClient(host: host, token: credential);
-    _stderr.writeln('Private Pub MCP connected to $host over stdio.');
+    _stderr.writeln('Ppub MCP connected to $host over stdio.');
     try {
       await PrivatePubMcpServer(
         client: client,
@@ -504,7 +580,7 @@ final class PrivatePubCli {
   Future<int> _versions(ArgResults global, ArgResults command) async {
     if (command.rest.length != 1) {
       throw UsageException(
-        'Usage: private_pub versions <package>',
+        'Usage: ppub versions <package>',
         _usage,
       );
     }
@@ -535,7 +611,7 @@ final class PrivatePubCli {
   Future<int> _compare(ArgResults global, ArgResults command) async {
     if (command.rest.length != 3) {
       throw UsageException(
-        'Usage: private_pub compare <package> <from> <to>',
+        'Usage: ppub compare <package> <from> <to>',
         _usage,
       );
     }
@@ -647,7 +723,7 @@ final class PrivatePubCli {
     if (defaultHost != null) return defaultHost;
     throw UsageException(
       requireLogin
-          ? 'Registry URL is required. Example: private_pub login https://pub.company.dev'
+          ? 'Registry URL is required. Example: ppub login https://pub.company.dev'
           : 'Registry URL is required.',
       _usage,
     );
@@ -672,7 +748,7 @@ final class PrivatePubCli {
     final credential = _credentials.get(host);
     if (credential == null) {
       throw UsageException(
-        'No token is available for $host. Run `private_pub login $host` first.',
+        'No token is available for $host. Run `ppub login $host` first.',
         _usage,
       );
     }
@@ -753,7 +829,7 @@ final class PrivatePubCli {
     final defaultHost = _credentials.defaultHost;
     if (defaultHost != null) return defaultHost;
     throw UsageException(
-      'Private registry is required. Use --host or run `private_pub login`.',
+      'Private registry is required. Use --host or run `ppub login`.',
       _usage,
     );
   }
@@ -888,39 +964,190 @@ final class PrivatePubCli {
 
   void _printUsage() => _stdout.writeln(_usage);
 
+  int _config(ArgResults global, ArgResults command) {
+    final subcommand = command.command;
+    if (subcommand == null || subcommand.name == 'show') {
+      final defaultHost = _credentials.defaultHost;
+      if (defaultHost != null) {
+        _stdout.writeln('Default registry server: $defaultHost');
+      } else {
+        _stdout.writeln('No default registry server configured.');
+      }
+      return 0;
+    }
+    if (subcommand.name == 'set-server') {
+      if (subcommand.rest.isEmpty) {
+        throw UsageException('Usage: ppub config set-server <host>', _usage);
+      }
+      final host = _parseHost(subcommand.rest.first);
+      _credentials.setDefault(host);
+      _stdout.writeln('Default registry server set to: $host');
+      return 0;
+    }
+    throw UsageException('Unknown subcommand: ${subcommand.name}', _usage);
+  }
+
+  Future<int> _add(ArgResults global, ArgResults command) async {
+    if (command.rest.isEmpty) {
+      throw UsageException('Usage: ppub add [<section>:]<package>[:<descriptor>] ...', _usage);
+    }
+    final directory = _directory(global);
+    final pubspecFile = File(p.join(directory, 'pubspec.yaml'));
+    if (!pubspecFile.existsSync()) {
+      throw ProjectException('No pubspec.yaml found in $directory.');
+    }
+
+    final host = _resolveHost(global, directory);
+    final client = _client(global, host);
+    try {
+      final content = pubspecFile.readAsStringSync();
+      final editor = YamlEditor(content);
+
+      for (final arg in command.rest) {
+        final parts = arg.split(':');
+        String section = 'dependencies';
+        String package;
+        String? descriptor;
+
+        if (parts.length >= 3) {
+          section = _mapSection(parts[0]);
+          package = parts[1];
+          descriptor = parts.sublist(2).join(':');
+        } else if (parts.length == 2) {
+          if (_isValidSectionPrefix(parts[0])) {
+            section = _mapSection(parts[0]);
+            package = parts[1];
+          } else {
+            package = parts[0];
+            descriptor = parts[1];
+          }
+        } else {
+          package = parts[0];
+        }
+
+        if (descriptor == null) {
+          _stdout.writeln('Resolving latest version for $package from $host ...');
+          try {
+            final registryPackage = await client.getPackage(package);
+            final latest = registryPackage.latest(includePrereleases: false);
+            if (latest == null) {
+              throw RegistryException('No active version found for package $package.');
+            }
+            descriptor = '^${latest.version}';
+          } catch (e) {
+            _stdout.writeln('Could not resolve latest version for $package: $e. Defaulting to any.');
+            descriptor = 'any';
+          }
+        }
+
+        // Add to pubspec using YamlEditor
+        editor.update([section, package], {
+          'hosted': host.toString(),
+          'version': descriptor,
+        });
+        _stdout.writeln('Added $package: $descriptor to $section.');
+      }
+
+      pubspecFile.writeAsStringSync(editor.toString());
+      _stdout.writeln('Updated pubspec.yaml successfully.');
+
+      // Run pub get
+      _stdout.writeln('Running pub get ...');
+      final code = await _runPub(global, ['get']);
+      return code;
+    } finally {
+      client.close();
+    }
+  }
+
+  bool _isValidSectionPrefix(String prefix) {
+    return const ['dev', 'override', 'dependencies', 'dev_dependencies', 'dependency_overrides'].contains(prefix);
+  }
+
+  String _mapSection(String prefix) {
+    switch (prefix) {
+      case 'dev':
+      case 'dev_dependencies':
+        return 'dev_dependencies';
+      case 'override':
+      case 'dependency_overrides':
+        return 'dependency_overrides';
+      default:
+        return 'dependencies';
+    }
+  }
+
+  Future<int> _global(ArgResults global, ArgResults command) async {
+    final subcommand = command.command;
+    if (subcommand == null) {
+      throw UsageException('Usage: ppub global <activate|deactivate> [arguments]', _usage);
+    }
+    if (subcommand.name == 'activate') {
+      if (subcommand.rest.isEmpty) {
+        throw UsageException('Usage: ppub global activate <package>', _usage);
+      }
+      final directory = _directory(global);
+      final host = _resolveHost(global, directory);
+      await _ensurePubToken(global, host);
+      return await _runPub(global, [
+        'global',
+        'activate',
+        '--hosted-url',
+        host.toString(),
+        ...subcommand.rest,
+      ]);
+    } else if (subcommand.name == 'deactivate') {
+      if (subcommand.rest.isEmpty) {
+        throw UsageException('Usage: ppub global deactivate <package>', _usage);
+      }
+      return await _runPub(global, [
+        'global',
+        'deactivate',
+        ...subcommand.rest,
+      ]);
+    } else {
+      throw UsageException('Unknown subcommand: ${subcommand.name}', _usage);
+    }
+  }
+
   String get _usage => '''
 Inspect and update packages in a private Dart/Flutter Pub registry.
 
-Usage: private_pub [global options] <command> [arguments]
+Usage: ppub [global options] <command> [arguments]
 
 Global options:
 ${_parser.usage}
 
 Commands:
   login [url]                    OAuth login in the system browser
-  logout [url]                   Remove a stored CLI login
-  setup [url]                    Register the token with the Dart SDK
+  logout                         Remove stored credentials
+  setup                          Register the stored token with Dart Pub
   publish                        Smart publish without editing pubspec.yaml
   publish --auto [packages...]   Publish a monorepo in dependency order
   prepare [packages...]          Generate hosted monorepo package copies
   mcp                            Start the private package MCP stdio server
-  check                         Compare project locks with registry versions
-  versions <package>            List versions published in the registry
-  compare <package> <from> <to> Compare SDK and dependency constraints
-  outdated                      Run fvm dart/flutter pub outdated
-  upgrade [packages...]         Run fvm dart/flutter pub upgrade
+  config                         Show or change default server
+  add <package>                  Add hosted dependencies to pubspec.yaml
+  global                         Manage globally-installed packages
+  check                          Compare project locks with registry versions
+  versions <package>             List versions published in the registry
+  compare <package> <from> <to>  Compare SDK and dependency constraints
+  outdated                       Run fvm dart/flutter pub outdated
+  upgrade [packages...]          Run fvm dart/flutter pub upgrade
 
 Examples:
-  private_pub login https://pub.company.dev
-  private_pub publish
-  private_pub -C packages publish --auto
-  private_pub -C packages prepare --dry-run
-  private_pub mcp
-  private_pub --host https://pub.company.dev check
-  private_pub versions company_ui
-  private_pub compare company_ui 1.2.0 2.0.0
-  private_pub outdated --transitive
-  private_pub upgrade
-  private_pub upgrade --major-versions --dry-run
+  ppub login https://pub.company.dev
+  ppub config set-server https://pub.company.dev
+  ppub add dev:company_ui:^1.2.0
+  ppub publish
+  ppub -C packages publish --auto
+  ppub -C packages prepare --dry-run
+  ppub mcp
+  ppub check
+  ppub versions company_ui
+  ppub compare company_ui 1.2.0 2.0.0
+  ppub outdated --transitive
+  ppub upgrade
+  ppub upgrade --major-versions --dry-run
 ''';
 }

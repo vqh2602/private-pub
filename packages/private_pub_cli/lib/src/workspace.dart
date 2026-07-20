@@ -276,6 +276,8 @@ const _ignoredDirectories = {
   '.dart_tool',
   '.git',
   '.private_pub',
+  '.club',
+  '.ppub',
   'build',
 };
 

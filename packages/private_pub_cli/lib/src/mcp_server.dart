@@ -38,7 +38,7 @@ final class PrivatePubMcpServer {
       } on FormatException catch (error) {
         _writeError(null, -32700, 'Invalid JSON: ${error.message}');
       } on Object catch (error, stackTrace) {
-        _errors.writeln('private_pub mcp: $error\n$stackTrace');
+        _errors.writeln('ppub mcp: $error\n$stackTrace');
       }
     }
   }
@@ -106,23 +106,27 @@ final class PrivatePubMcpServer {
       final Object result;
       switch (name) {
         case 'private_pub_search':
+        case 'ppub_search':
           final query = _requiredString(arguments, 'query');
           final rawLimit = arguments['limit'];
           final limit = rawLimit is int ? rawLimit.clamp(1, 50) : 10;
           result = await _client.search(query, limit: limit);
           break;
         case 'private_pub_get_package':
+        case 'ppub_get_package':
           result = await _client.getPackageDetail(
             _requiredString(arguments, 'name'),
           );
           break;
         case 'private_pub_list_files':
+        case 'ppub_list_files':
           result = await _client.getPackageFiles(
             _requiredString(arguments, 'name'),
             _requiredString(arguments, 'version'),
           );
           break;
         case 'private_pub_read_file':
+        case 'ppub_read_file':
           result = await _client.getPackageFile(
             _requiredString(arguments, 'name'),
             _requiredString(arguments, 'version'),
@@ -178,7 +182,7 @@ final class PrivatePubMcpServer {
 
 const _tools = [
   {
-    'name': 'private_pub_search',
+    'name': 'ppub_search',
     'description':
         'Search packages in the authenticated private Dart registry.',
     'inputSchema': {
@@ -192,7 +196,7 @@ const _tools = [
     },
   },
   {
-    'name': 'private_pub_get_package',
+    'name': 'ppub_get_package',
     'description':
         'Read package metadata, versions, SDK constraints, and dependencies.',
     'inputSchema': {
@@ -205,7 +209,7 @@ const _tools = [
     },
   },
   {
-    'name': 'private_pub_list_files',
+    'name': 'ppub_list_files',
     'description': 'List source files for a private package version.',
     'inputSchema': {
       'type': 'object',
@@ -218,8 +222,62 @@ const _tools = [
     },
   },
   {
-    'name': 'private_pub_read_file',
+    'name': 'ppub_read_file',
     'description': 'Read one text source file from a private package version.',
+    'inputSchema': {
+      'type': 'object',
+      'properties': {
+        'name': {'type': 'string'},
+        'version': {'type': 'string'},
+        'path': {'type': 'string'},
+      },
+      'required': ['name', 'version', 'path'],
+      'additionalProperties': false,
+    },
+  },
+  {
+    'name': 'private_pub_search',
+    'description':
+        'Search packages in the authenticated private Dart registry (legacy).',
+    'inputSchema': {
+      'type': 'object',
+      'properties': {
+        'query': {'type': 'string'},
+        'limit': {'type': 'integer', 'minimum': 1, 'maximum': 50},
+      },
+      'required': ['query'],
+      'additionalProperties': false,
+    },
+  },
+  {
+    'name': 'private_pub_get_package',
+    'description':
+        'Read package metadata, versions, SDK constraints, and dependencies (legacy).',
+    'inputSchema': {
+      'type': 'object',
+      'properties': {
+        'name': {'type': 'string'},
+      },
+      'required': ['name'],
+      'additionalProperties': false,
+    },
+  },
+  {
+    'name': 'private_pub_list_files',
+    'description': 'List source files for a private package version (legacy).',
+    'inputSchema': {
+      'type': 'object',
+      'properties': {
+        'name': {'type': 'string'},
+        'version': {'type': 'string'},
+      },
+      'required': ['name', 'version'],
+      'additionalProperties': false,
+    },
+  },
+  {
+    'name': 'private_pub_read_file',
+    'description': 'Read one text source file from a private package version (legacy).',
     'inputSchema': {
       'type': 'object',
       'properties': {

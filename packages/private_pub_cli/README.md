@@ -1,22 +1,10 @@
-# private_pub_cli
+# ppub (private_pub_cli)
 
-`private_pub_cli` logs in, configures, publishes, searches, compares, and
-upgrades Dart or Flutter packages against this private Hosted Pub Repository.
-It includes source-preserving smart publish, topological monorepo publishing,
-and an MCP stdio server for AI tools.
+`ppub` (packaged as `private_pub_cli`) logs in, configures, publishes, searches, compares, and upgrades Dart or Flutter packages against a private Hosted Pub Repository. It includes source-preserving smart publish, topological monorepo publishing, and an MCP stdio server for AI tools.
 
-The `outdated` and `upgrade` commands delegate dependency resolution to the
-installed Dart or Flutter SDK. They deliberately do **not** forward a global
-`PUB_HOSTED_URL`: Pub has no fallback from a private host to pub.dev, so a
-global value would make public dependencies fail resolution. Declare the
-private host on each private dependency instead. Lockfiles, Pub workspaces,
-authentication configured with `fvm dart pub token`, and the Pub version solver
-therefore keep their standard behavior.
+The `outdated` and `upgrade` commands delegate dependency resolution to the installed Dart or Flutter SDK. They deliberately do **not** forward a global `PUB_HOSTED_URL`: Pub has no fallback from a private host to pub.dev, so a global value would make public dependencies fail resolution. Declare the private host on each private dependency instead. Lockfiles, Pub workspaces, authentication configured with `fvm dart pub token`, and the Pub version solver therefore keep their standard behavior.
 
-FVM is required. Every Dart and Flutter SDK subprocess started by this CLI is
-executed through `fvm`; direct system `dart` or `flutter` executables are never
-used. Set `FVM_EXECUTABLE` only when the FVM binary is installed at a custom
-path.
+FVM is required. Every Dart and Flutter SDK subprocess started by this CLI is executed through `fvm`; direct system `dart` or `flutter` executables are never used. Set `FVM_EXECUTABLE` only when the FVM binary is installed at a custom path.
 
 ## Install
 
@@ -30,44 +18,75 @@ During local development:
 fvm dart pub global activate --source path .
 ```
 
+This installs the `ppub` executable globally.
+
+## Default Server Configuration
+
+You can configure a default private registry server so you do not need to specify it in every command:
+
+```bash
+ppub config set-server https://pub.company.dev
+ppub config show
+```
+
 ## Login and configure
 
-Use browser-based OAuth Authorization Code + PKCE. Login also registers the
-token with the Dart SDK by default:
+Use browser-based OAuth Authorization Code + PKCE. Login also registers the token with the Dart SDK by default:
 
 ```bash
-private_pub login https://pub.company.dev
-private_pub setup # re-register after installing a new Dart SDK
-private_pub logout https://pub.company.dev
+ppub login https://pub.company.dev
+# Or login to the configured default server:
+ppub login
+
+# If you are running in an environment without a browser:
+ppub login --no-browser
+
+# If you already have a static Bearer token or PAT:
+ppub login --key your-api-token
+
+# Re-register token after installing a new Dart SDK:
+ppub setup
+
+# Logout:
+ppub logout --server https://pub.company.dev
+# Or logout from all servers:
+ppub logout --all
 ```
 
-Credentials are stored separately from Dart Pub so the CLI can select among
-registries and power MCP. On macOS/Linux the default file is
-`~/.config/private_pub/credentials.json` with mode `0600`. For CI, keep the
-secret in an environment variable:
+Credentials are stored separately from Dart Pub so the CLI can select among registries and power MCP. On macOS/Linux the default file is `~/.config/ppub/credentials.json` with mode `0600`. For CI, keep the secret in an environment variable:
 
 ```bash
-private_pub --host https://pub.company.dev setup --env-var PRIVATE_PUB_TOKEN
+ppub --host https://pub.company.dev setup --env-var PRIVATE_PUB_TOKEN
 ```
+
+## Add Dependency
+
+Easily add private registry hosted packages to your `pubspec.yaml`:
+
+```bash
+ppub add company_ui
+# Specify version constraint:
+ppub add company_ui:^1.2.0
+# Add to dev_dependencies:
+ppub add dev:company_ui
+# Add to dependency_overrides:
+ppub add override:company_ui
+```
+
+If no version constraint is specified, `ppub` queries the private server to resolve and append the latest version.
 
 ## Registry selection
 
-Pass `--host` before private metadata commands (`check`, `versions`, and
-`compare`). This affects only `private_pub`, not `fvm dart pub` or
-`fvm flutter pub`
-commands started directly from the same shell:
+Pass `--host` before private metadata commands (`check`, `versions`, and `compare`). This affects only `ppub`, not `fvm dart pub` or `fvm flutter pub` commands started directly from the same shell:
 
 ```bash
-private_pub --host https://pub.company.dev check
-private_pub --host https://pub.company.dev versions company_ui
+ppub --host https://pub.company.dev check
+ppub --host https://pub.company.dev versions company_ui
 ```
 
-Avoid exporting `PUB_HOSTED_URL` in a shell that also runs normal Pub commands:
-an exported environment variable is inherited by every child process, including
-direct `fvm dart pub` and `fvm flutter pub` invocations.
+Avoid exporting `PUB_HOSTED_URL` in a shell that also runs normal Pub commands: an exported environment variable is inherited by every child process, including direct `fvm dart pub` and `fvm flutter pub` invocations.
 
-For a project that uses both pub.dev and a private registry, pin the registry
-on every private package in `pubspec.yaml`:
+For a project that uses both pub.dev and a private registry, pin the registry on every private package in `pubspec.yaml`:
 
 ```yaml
 dependencies:
@@ -77,106 +96,99 @@ dependencies:
   http: ^1.0.0 # resolved from pub.dev
 ```
 
-Direct metadata commands (`check`, `versions`, and `compare`) can use a bearer
-token without putting the secret in shell history:
+Direct metadata commands (`check`, `versions`, and `compare`) can use a bearer token without putting the secret in shell history:
 
 ```bash
 export PRIVATE_PUB_TOKEN='your-token'
-private_pub versions company_ui
+ppub versions company_ui
 ```
 
-Use `--token-env NAME` if your token is stored in another environment variable.
-The CLI refuses to send bearer tokens over plain HTTP except to loopback hosts;
-use HTTPS for every shared or remote registry.
+Use `--token-env NAME` if your token is stored in another environment variable. The CLI refuses to send bearer tokens over plain HTTP except to loopback hosts; use HTTPS for every shared or remote registry.
 
 ## Commands
 
 ### Smart publish
 
-`publish` writes `publish_to` only into a clean temporary copy and delegates
-validation/upload to the installed Dart SDK. The source `pubspec.yaml` is never
-changed:
+`publish` writes `publish_to` only into a clean temporary copy and delegates validation/upload to the installed Dart SDK. The source `pubspec.yaml` is never changed:
 
 ```bash
-private_pub -C packages/company_ui publish
-private_pub -C packages/company_ui publish --dry-run
-private_pub -C packages/company_ui publish --force
+ppub -C packages/company_ui publish
+ppub -C packages/company_ui publish --dry-run
+ppub -C packages/company_ui publish --force
 ```
 
-For monorepos, `--auto` discovers packages, builds the dependency graph,
-selects the transitive closure of optional target packages, converts local
-path/workspace dependencies to hosted constraints, and publishes dependencies
-first. Cycles and path dependencies outside the workspace fail before upload:
+For monorepos, `--auto` discovers packages, builds the dependency graph, selects the transitive closure of optional target packages, converts local path/workspace dependencies to hosted constraints, and publishes dependencies first. Cycles and path dependencies outside the workspace fail before upload:
 
 ```bash
-private_pub -C . publish --auto
-private_pub -C . publish --auto app_package shared_package
-private_pub -C . publish --auto --dry-run
-private_pub -C . prepare --output /tmp/publish-ready
+ppub -C . publish --auto
+ppub -C . publish --auto app_package shared_package
+ppub -C . publish --auto --dry-run
+ppub -C . prepare --output /tmp/publish-ready
 ```
 
-`prepare` materializes publish-ready copies for inspection or another CI stage;
-it does not edit the checkout. Its default output is `.private_pub/prepare`.
-For `publish --auto`, `--dry-run` prints and validates the dependency/rewrite
-plan without invoking Dart Pub; single-package `publish --dry-run` runs Dart's
-full publish validation.
+`prepare` materializes publish-ready copies for inspection or another CI stage; it does not edit the checkout. Its default output is `.ppub/prepare`. For `publish --auto`, `--dry-run` prints and validates the dependency/rewrite plan without invoking Dart Pub; single-package `publish --dry-run` runs Dart's full publish validation.
 
 ### MCP for AI tools
 
-After login, expose authenticated search, package metadata, file listing, and
-source reading over MCP stdio:
+Expose authenticated search, package metadata, file listing, and source reading over MCP stdio:
 
 ```json
 {
   "mcpServers": {
-    "private-pub": {
-      "command": "private_pub",
+    "ppub": {
+      "command": "ppub",
       "args": ["mcp"]
     }
   }
 }
 ```
 
-Pass global `--host https://pub.company.dev` before `mcp` to pin a non-default
-login. Protocol JSON is emitted only on stdout; diagnostics go to stderr.
+Or connect manually/override host:
+```bash
+ppub mcp --server https://pub.company.dev --token your-pat
+```
+
+### Global packages activation
+
+Activate and manage global packages from the private registry:
+
+```bash
+ppub global activate my_cli_tool
+ppub global deactivate my_cli_tool
+```
 
 ### Check a project
 
 ```bash
-private_pub check
-private_pub check --prereleases
-private_pub check --fail-on-outdated
+ppub check
+ppub check --prereleases
+ppub check --fail-on-outdated
 ```
 
-The table compares each direct dependency's locked version and constraint with
-the newest active version available from the private registry. Use
-`--fail-on-outdated` in CI.
+The table compares each direct dependency's locked version and constraint with the newest active version available from the private registry. Use `--fail-on-outdated` in CI.
 
 ### List and compare registry versions
 
 ```bash
-private_pub versions company_ui
-private_pub versions company_ui --retracted
-private_pub compare company_ui 1.8.0 2.0.0
+ppub versions company_ui
+ppub versions company_ui --retracted
+ppub compare company_ui 1.8.0 2.0.0
 ```
 
-`compare` classifies the SemVer change and compares publication state, minimum
-SDK constraints, and dependency constraints in the two published pubspecs.
+`compare` classifies the SemVer change and compares publication state, minimum SDK constraints, and dependency constraints in the two published pubspecs.
 
 ### Run Pub's dependency solver
 
 ```bash
-private_pub outdated
-private_pub outdated --transitive --json
-private_pub upgrade
-private_pub upgrade http company_ui
-private_pub upgrade --major-versions
-private_pub upgrade --major-versions --dry-run
+ppub outdated
+ppub outdated --transitive --json
+ppub upgrade
+ppub upgrade http company_ui
+ppub upgrade --major-versions
+ppub upgrade --major-versions --dry-run
 ```
 
-The CLI automatically chooses `fvm flutter pub` when the project has an SDK
-dependency on Flutter; otherwise it uses `fvm dart pub`. Override detection
-with `--sdk=dart` or `--sdk=flutter`.
+The CLI automatically chooses `fvm flutter pub` when the project has an SDK dependency on Flutter; otherwise it uses `fvm dart pub`. Override detection with `--sdk=dart` or `--sdk=flutter`.
 
 Use `-C path/to/project` to run against another project directory.
 
@@ -191,6 +203,4 @@ Use `-C path/to/project` to run against another project directory.
 
 ## Security
 
-Prefer `fvm dart pub token add` for `outdated` and `upgrade`. For metadata commands,
-pass the name of an environment variable with `--token-env`; never put a token
-directly in command arguments or commit it to a pubspec.
+Prefer `fvm dart pub token add` for `outdated` and `upgrade`. For metadata commands, pass the name of an environment variable with `--token-env`; never put a token directly in command arguments or commit it to a pubspec.
