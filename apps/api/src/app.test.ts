@@ -358,6 +358,32 @@ describe("registry API", () => {
     expect(downloaded.statusCode).toBe(200);
     expect(downloaded.rawPayload.equals(archive)).toBe(true);
   });
+  it("bounds unfinished upload sessions", async () => {
+    const previousLimit = process.env.MAX_PENDING_UPLOAD_SESSIONS;
+    process.env.MAX_PENDING_UPLOAD_SESSIONS = "1";
+    const isolated = await buildApp();
+    try {
+      const headers = { authorization: "Bearer demo-admin-token" };
+      const first = await isolated.inject({
+        method: "GET",
+        url: "/api/packages/versions/new",
+        headers,
+      });
+      const second = await isolated.inject({
+        method: "GET",
+        url: "/api/packages/versions/new",
+        headers,
+      });
+      expect(first.statusCode).toBe(200);
+      expect(second.statusCode).toBe(503);
+      expect(second.json().error.code).toBe("upload_capacity_reached");
+    } finally {
+      await isolated.close();
+      if (previousLimit === undefined)
+        delete process.env.MAX_PENDING_UPLOAD_SESSIONS;
+      else process.env.MAX_PENDING_UPLOAD_SESSIONS = previousLimit;
+    }
+  });
   it("records the account that published each version of the same package", async () => {
     const repository = new DemoRegistryRepository();
     await repository.initialize();

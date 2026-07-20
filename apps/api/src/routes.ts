@@ -71,11 +71,25 @@ export async function registerRoutes(
     string,
     {
       actor: PublishActor;
+      createdAt: number;
       archive?: Buffer;
       filename?: string;
       uploadedAt?: string;
     }
   >();
+  const uploadSessionTtlMs = positiveNumber(
+    process.env.UPLOAD_SESSION_TTL_MS,
+    15 * 60 * 1000,
+  );
+  const maxPendingUploadSessions = positiveNumber(
+    process.env.MAX_PENDING_UPLOAD_SESSIONS,
+    20,
+  );
+  const prunePendingUploads = () => {
+    const oldestAllowed = Date.now() - uploadSessionTtlMs;
+    for (const [id, upload] of pendingUploads)
+      if (upload.createdAt < oldestAllowed) pendingUploads.delete(id);
+  };
   const scopes = (...required: Parameters<typeof requireScopes>[1][]) =>
     requireScopes(repository, ...required);
   app.get("/health", async () => ({
@@ -298,9 +312,18 @@ export async function registerRoutes(
   );
 
   const startUpload = async (request: FastifyRequest, reply: FastifyReply) => {
+    prunePendingUploads();
+    if (pendingUploads.size >= maxPendingUploadSessions)
+      return reply.code(503).type(hostedContentType).send({
+        error: {
+          code: "upload_capacity_reached",
+          message: "Too many uploads are pending. Retry shortly.",
+        },
+      });
     const uploadId = randomUUID();
     pendingUploads.set(uploadId, {
       actor: { id: request.actor!.id, username: request.actor!.username },
+      createdAt: Date.now(),
     });
     return reply.type(hostedContentType).send({
       url: `${request.protocol}://${request.host}/api/uploads/${uploadId}`,
@@ -323,6 +346,7 @@ export async function registerRoutes(
     "/api/uploads/:uploadId",
     { preHandler: scopes("packages:publish") },
     async (request, reply) => {
+      prunePendingUploads();
       const { uploadId } = request.params as { uploadId: string };
       const pending = pendingUploads.get(uploadId);
       if (!pending)
@@ -369,6 +393,7 @@ export async function registerRoutes(
     "/api/packages/versions/newUploadFinish",
     { preHandler: scopes("packages:publish") },
     async (request, reply) => {
+      prunePendingUploads();
       const uploadId = String(
         (request.query as { uploadId?: string }).uploadId ?? "",
       );
@@ -663,4 +688,9 @@ export async function registerRoutes(
       },
     );
   }
+}
+
+function positiveNumber(value: string | undefined, fallback: number) {
+  const parsed = Number(value ?? fallback);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback;
 }

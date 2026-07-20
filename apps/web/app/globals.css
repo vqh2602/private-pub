@@ -618,6 +618,46 @@ select {
 .empty-results h3 {
   color: var(--text);
 }
+.registry-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 18px;
+  margin: 48px 0;
+  padding: 28px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--surface);
+}
+.registry-error > svg {
+  flex: 0 0 auto;
+  color: #d97706;
+}
+.registry-error h1 {
+  margin: 6px 0 8px;
+}
+.registry-error p {
+  margin: 0 0 16px;
+  color: var(--muted);
+}
+.registry-error code {
+  display: block;
+  width: fit-content;
+  margin-bottom: 16px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--surface-raised);
+}
+.registry-error button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border: 0;
+  border-radius: 9px;
+  color: white;
+  background: var(--blue);
+  font-weight: 700;
+}
 
 .package-hero,
 .subpage-hero {

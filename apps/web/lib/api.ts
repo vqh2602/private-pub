@@ -50,7 +50,7 @@ export async function searchPackages(
     if (!response.ok) throw new Error(String(response.status));
     return response.json();
   } catch (error) {
-    if (!allowDemoFallback) throw error;
+    if (!allowDemoFallback) throw registryApiUnavailable(error);
     const items = fallbackPackages.filter((item) => {
       const sdk = item.topics.includes("flutter") ? "flutter" : "dart";
       return (
@@ -93,7 +93,7 @@ export async function getRegistryStats(): Promise<RegistryStats> {
     if (!response.ok) throw new Error(String(response.status));
     return response.json();
   } catch (error) {
-    if (!allowDemoFallback) throw error;
+    if (!allowDemoFallback) throw registryApiUnavailable(error);
     return {
       packages: fallbackPackages.length,
       versions: fallbackPackages.length,
@@ -118,7 +118,7 @@ export async function getPackage(
     );
     return response.ok ? response.json() : null;
   } catch (error) {
-    if (!allowDemoFallback) throw error;
+    if (!allowDemoFallback) throw registryApiUnavailable(error);
     if (name !== fallbackDetail.package.name) return null;
     return {
       ...fallbackDetail,
@@ -140,11 +140,24 @@ export async function getPackageFiles(
     );
     return response.ok ? response.json() : null;
   } catch (error) {
-    if (!allowDemoFallback) throw error;
+    if (!allowDemoFallback) throw registryApiUnavailable(error);
     return name === fallbackDetail.package.name && version === v.version
       ? fallbackDetail.files
       : null;
   }
+}
+
+function registryApiUnavailable(cause: unknown) {
+  if (
+    cause instanceof Error &&
+    "digest" in cause &&
+    cause.digest === "DYNAMIC_SERVER_USAGE"
+  )
+    return cause;
+  return new Error(
+    "Registry API is unavailable. Start it with `pnpm dev` and ensure database migrations are applied.",
+    { cause },
+  );
 }
 
 const fallbackPackages: PackageSummary[] = [
