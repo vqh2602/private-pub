@@ -1,6 +1,6 @@
 library;
 
-export 'src/cli.dart' show PrivatePubCli;
+export 'src/cli.dart' show PrivatePubCli, RegistryClientFactory;
 export 'src/credentials.dart';
 export 'src/dependency_inspector.dart';
 export 'src/mcp_server.dart';

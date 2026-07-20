@@ -66,6 +66,21 @@ docker compose up --build -d
 docker compose ps
 ```
 
+### Cấu hình production
+
+Tạo file môi trường production từ mẫu, thay toàn bộ giá trị `CHANGE_ME`, rồi
+khởi động Compose với chính file đó:
+
+```bash
+cp .env.production.example .env.production
+# Chỉnh domain HTTPS, mật khẩu PostgreSQL, TOKEN_PEPPER và admin password.
+docker compose --env-file .env.production up --build -d
+```
+
+Mẫu [`.env.production.example`](.env.production.example) đặt `DEMO_MODE=false`,
+cookie HTTPS, CORS allowlist và các secret bắt buộc cho production. Không commit
+`.env.production`; file này đã được ignore bởi Git.
+
 Docker image build API, Web và Worker trước khi chạy; source code không được bind-mount vào container. Migration PostgreSQL đã commit được áp dụng tự động khi API khởi động. PostgreSQL và Valkey chỉ bind vào loopback ở cổng `5432` và `6379`.
 
 Archive được lưu dưới dạng `.tar.gz` trong named volume `archive-data` tại `/data/archives`; PostgreSQL dùng volume `postgres-data`. `docker compose down` giữ nguyên cả hai volume, còn `docker compose down --volumes` sẽ xóa toàn bộ dữ liệu local này.
@@ -202,15 +217,27 @@ Package mới mặc định là private và tài khoản phát hành đầu tiê
 
 Analyzer thật chỉ được bật trong production khi job chạy trong sandbox tách biệt và `ANALYZER_SANDBOXED=true`. Runner phải không chứa credential, chạy user không đặc quyền, giới hạn CPU/RAM/process, dùng filesystem tạm và chặn network mặc định. Nếu chưa có runner này, giữ `MOCK_ANALYZER=true`.
 
+FVM là bắt buộc cho toàn bộ lệnh SDK. Repository ghim Flutter trong `.fvmrc`;
+Worker và CLI chỉ gọi `fvm dart` hoặc `fvm flutter`, không gọi trực tiếp SDK
+trong `PATH`. Bộ công cụ đang ghim là FVM `3.2.1`, Flutter `3.41.9` và Dart
+`3.11.5`. Docker image cài sẵn đúng các phiên bản này. Có thể đặt
+`FVM_EXECUTABLE` nếu binary FVM nằm ở đường dẫn khác.
+
+Đổi `FLUTTER_VERSION` trong `.env` để chọn SDK của Docker image, sau đó build
+lại bằng `docker compose build --no-cache`. Với local, chạy
+`fvm use <version>` tại thư mục repository để cập nhật `.fvmrc`; nên dùng cùng
+giá trị với `FLUTTER_VERSION`. Phiên bản đang chạy thực tế luôn được API đọc từ
+FVM và hiển thị ở footer Web, vì vậy cấu hình lệch sẽ nhìn thấy ngay.
+
 ## Quy trình Dart CLI
 
 Repository có package CLI độc lập tại `packages/private_pub_cli`. Có thể chạy
-trực tiếp trong source bằng `dart run`, hoặc activate toàn cục để dùng lệnh
+trực tiếp trong source bằng `fvm dart run`, hoặc activate toàn cục để dùng lệnh
 `private_pub`:
 
 ```bash
 cd packages/private_pub_cli
-dart pub global activate --source path .
+fvm dart pub global activate --source path .
 
 private_pub --host http://localhost:4000 check
 private_pub --host http://localhost:4000 versions aurora_ui
@@ -220,7 +247,7 @@ private_pub --host http://localhost:4000 upgrade
 private_pub --host http://localhost:4000 upgrade --major-versions --dry-run
 ```
 
-CLI tự chọn `flutter pub` cho Flutter project và `dart pub` cho Dart project.
+CLI tự chọn `fvm flutter pub` cho Flutter project và `fvm dart pub` cho Dart project.
 Xem hướng dẫn đầy đủ trong `packages/private_pub_cli/README.md`.
 
 Đăng nhập OAuth trực tiếp từ terminal. CLI mở browser, dùng Authorization Code

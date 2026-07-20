@@ -16,6 +16,10 @@ import 'registry_client.dart';
 import 'workspace.dart';
 
 typedef Environment = Map<String, String>;
+typedef RegistryClientFactory = RegistryClient Function(
+  Uri host,
+  String? token,
+);
 
 final class PrivatePubCli {
   PrivatePubCli({
@@ -25,13 +29,21 @@ final class PrivatePubCli {
     String? workingDirectory,
     CredentialStore? credentialStore,
     PubTokenRegistrar? pubTokenRegistrar,
+    RegistryClientFactory? registryClientFactory,
   })  : _stdout = stdout ?? ioStdout,
         _stderr = stderr ?? ioStderr,
         _environment = environment ?? Platform.environment,
         _workingDirectory = workingDirectory ?? Directory.current.path,
         _credentials = credentialStore ??
             CredentialStore(environment: environment ?? Platform.environment),
-        _pubTokens = pubTokenRegistrar ?? const PubTokenRegistrar();
+        _pubTokens = pubTokenRegistrar ??
+            PubTokenRegistrar(
+              fvmExecutable:
+                  (environment ?? Platform.environment)['FVM_EXECUTABLE'] ??
+                      'fvm',
+            ),
+        _registryClientFactory = registryClientFactory ??
+            ((host, token) => RegistryClient(host: host, token: token));
 
   static final IOSink ioStdout = stdout;
   static final IOSink ioStderr = stderr;
@@ -42,6 +54,7 @@ final class PrivatePubCli {
   final String _workingDirectory;
   final CredentialStore _credentials;
   final PubTokenRegistrar _pubTokens;
+  final RegistryClientFactory _registryClientFactory;
   final DependencyInspector _inspector = const DependencyInspector();
   final WorkspacePlanner _workspace = const WorkspacePlanner();
 
@@ -183,7 +196,7 @@ final class PrivatePubCli {
         ..addFlag(
           'setup',
           defaultsTo: true,
-          help: 'Also register the OAuth token with dart pub.',
+          help: 'Also register the OAuth token with fvm dart pub.',
         ),
     );
     parser.addCommand('logout');
@@ -260,7 +273,7 @@ final class PrivatePubCli {
     }
     _stdout.writeln('Removed the stored CLI login for $host.');
     _stdout.writeln(
-      'Run `dart pub token remove $host` to also remove the Dart SDK copy.',
+      'Run `fvm dart pub token remove $host` to also remove the Dart SDK copy.',
     );
     return 0;
   }
@@ -591,12 +604,14 @@ final class PrivatePubCli {
   Future<int> _runPub(ArgResults global, List<String> arguments) async {
     final directory = _directory(global);
     final requestedSdk = global['sdk'] as String;
-    final executable = requestedSdk == 'auto'
+    final sdk = requestedSdk == 'auto'
         ? (_inspector.isFlutterProject(directory) ? 'flutter' : 'dart')
         : requestedSdk;
     final environment = Map<String, String>.from(_environment)
       ..remove('PUB_HOSTED_URL');
-    _stderr.writeln('Running: $executable ${arguments.join(' ')}');
+    final fvm = _fvmExecutable;
+    final fvmArguments = <String>[sdk, ...arguments];
+    _stderr.writeln('Running: $fvm ${fvmArguments.join(' ')}');
     if (_hasConfiguredHost(global)) {
       _stderr.writeln(
         'Note: PUB_HOSTED_URL is not forwarded to Pub. Declare private '
@@ -605,8 +620,8 @@ final class PrivatePubCli {
       );
     }
     final process = await Process.start(
-      executable,
-      arguments,
+      fvm,
+      fvmArguments,
       workingDirectory: directory,
       environment: environment,
       mode: ProcessStartMode.inheritStdio,
@@ -690,12 +705,14 @@ final class PrivatePubCli {
       if (skipValidation) '--skip-validation',
       if (ignoreWarnings) '--ignore-warnings',
     ];
-    _stderr.writeln('Running: dart pub publish (temporary package copy)');
+    _stderr.writeln(
+      'Running: $_fvmExecutable dart pub publish (temporary package copy)',
+    );
     final environment = Map<String, String>.from(_environment)
       ..remove('PUB_HOSTED_URL');
     final process = await Process.start(
-      'dart',
-      arguments,
+      _fvmExecutable,
+      ['dart', ...arguments],
       workingDirectory: directory,
       environment: environment,
       mode: ProcessStartMode.inheritStdio,
@@ -716,7 +733,7 @@ final class PrivatePubCli {
   }
 
   RegistryClient _client(ArgResults global, Uri host) {
-    return RegistryClient(host: host, token: _credential(global, host));
+    return _registryClientFactory(host, _credential(global, host));
   }
 
   String _directory(ArgResults result) {
@@ -746,6 +763,11 @@ final class PrivatePubCli {
     return (option != null && option.trim().isNotEmpty) ||
         (_environment['PUB_HOSTED_URL']?.trim().isNotEmpty ?? false);
   }
+
+  String get _fvmExecutable =>
+      _environment['FVM_EXECUTABLE']?.trim().isNotEmpty == true
+          ? _environment['FVM_EXECUTABLE']!.trim()
+          : 'fvm';
 
   Uri _parseHost(String raw) {
     final uri = Uri.tryParse(raw);
@@ -885,8 +907,8 @@ Commands:
   check                         Compare project locks with registry versions
   versions <package>            List versions published in the registry
   compare <package> <from> <to> Compare SDK and dependency constraints
-  outdated                      Run dart/flutter pub outdated
-  upgrade [packages...]         Run dart/flutter pub upgrade
+  outdated                      Run fvm dart/flutter pub outdated
+  upgrade [packages...]         Run fvm dart/flutter pub upgrade
 
 Examples:
   private_pub login https://pub.company.dev

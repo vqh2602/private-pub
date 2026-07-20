@@ -66,6 +66,20 @@ docker compose up --build -d
 docker compose ps
 ```
 
+### Production configuration
+
+Copy the production template, replace every `CHANGE_ME` value, then start
+Compose with that environment file:
+
+```bash
+cp .env.production.example .env.production
+docker compose --env-file .env.production up --build -d
+```
+
+The [`.env.production.example`](.env.production.example) template enables
+production mode, HTTPS cookies, a CORS allowlist, and required secrets. Keep
+the generated `.env.production` out of Git.
+
 The image builds the API, Web, and Worker before starting; source code is not bind-mounted into the containers. Committed PostgreSQL migrations are deployed automatically when the API starts. PostgreSQL and Valkey bind to loopback ports `5432` and `6379`.
 
 Package `.tar.gz` files live in the `archive-data` named volume at `/data/archives`; PostgreSQL uses `postgres-data`. `docker compose down` preserves both volumes, while `docker compose down --volumes` removes all local container data.
@@ -198,13 +212,21 @@ Session đăng nhập được lưu ở cookie HttpOnly, `SameSite=Lax`, có th�
 
 ## Dart CLI flow
 
-Activate the CLI and sign in with OAuth Authorization Code + PKCE. The CLI
+Install FVM first. This repository pins Flutter in `.fvmrc`; all analyzer and
+CLI SDK commands run through FVM so local and Docker use the same SDK family.
+The current pinned toolchain is FVM `3.2.1`, Flutter `3.41.9`, and Dart
+`3.11.5`. Activate the CLI and sign in with OAuth Authorization Code + PKCE. The CLI
 opens the browser, stores its token in a user-only credential file, and
 registers it with the Dart SDK:
 
+Set `FLUTTER_VERSION` in `.env` and rebuild the image to change Docker's SDK.
+For local development, run `fvm use <version>` at the repository root and keep
+the resulting `.fvmrc` aligned with the environment value. The Web footer
+reports the versions detected from the running FVM installation.
+
 ```bash
 cd packages/private_pub_cli
-dart pub global activate --source path .
+fvm dart pub global activate --source path .
 private_pub login http://localhost:4000
 private_pub setup
 ```

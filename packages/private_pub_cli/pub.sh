@@ -1,2 +1,2 @@
 
- dart pub publish -f
+fvm dart pub publish -f

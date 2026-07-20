@@ -5,6 +5,9 @@ coverage
 .turbo
 .env
 .env.local
+.env.*
+!.env.example
+!.env.production.example
 *.log
 *.tsbuildinfo
 packages/database/prisma/dev.db

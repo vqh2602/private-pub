@@ -180,6 +180,25 @@ describe("registry API", () => {
       analyzedVersions: 9,
     });
   });
+  it("reports the application and FVM-managed SDK versions", async () => {
+    process.env.APP_VERSION = "1.2.3";
+    process.env.SYSTEM_FVM_VERSION = "3.2.1";
+    process.env.SYSTEM_FLUTTER_VERSION = "3.41.9";
+    process.env.SYSTEM_DART_VERSION = "3.11.5";
+    const response = await app.inject({
+      method: "GET",
+      url: "/v1/system/info",
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      appVersion: "1.2.3",
+      sdkProvider: "fvm",
+      fvmVersion: "3.2.1",
+      flutterVersion: "3.41.9",
+      dartVersion: "3.11.5",
+      available: true,
+    });
+  });
   it("rejects unsafe cross-origin state changes", async () => {
     const response = await app.inject({
       method: "POST",

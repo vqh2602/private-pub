@@ -121,31 +121,32 @@ MCP server sử dụng cùng credential với CLI và cho phép công cụ AI:
 
 Hệ thống được triển khai theo kiến trúc nhiều dịch vụ. Cấu hình Docker Compose mặc định gồm năm service:
 
-| Service | Vai trò |
-| --- | --- |
-| `web` | Giao diện người dùng và quản trị |
-| `api` | Hosted Pub V2 API, control-plane API và OAuth |
-| `worker` | Phân tích package và xử lý tác vụ nền |
+| Service    | Vai trò                                                         |
+| ---------- | --------------------------------------------------------------- |
+| `web`      | Giao diện người dùng và quản trị                                |
+| `api`      | Hosted Pub V2 API, control-plane API và OAuth                   |
+| `worker`   | Phân tích package và xử lý tác vụ nền                           |
 | `postgres` | Lưu tài khoản, package, phiên bản, quyền, metadata và audit log |
-| `redis` | Valkey dùng làm hạ tầng hàng đợi và điều phối tác vụ |
+| `redis`    | Valkey dùng làm hạ tầng hàng đợi và điều phối tác vụ            |
 
 Archive package được lưu trong Docker volume `archive-data`; dữ liệu PostgreSQL được lưu trong `postgres-data`. Kiến trúc hiện tại không sử dụng SQLite/Lite mode.
 
 ## Công nghệ sử dụng
 
-| Nhóm | Công nghệ | Mục đích |
-| --- | --- | --- |
-| Monorepo | pnpm, Turborepo | Quản lý workspace, build và test đồng bộ |
-| Ngôn ngữ backend | TypeScript, Node.js 22+ | Xây dựng API, Worker và package dùng chung |
-| API | Fastify 5, Zod, Swagger/OpenAPI | HTTP API, validation và tài liệu API |
-| Web | Next.js 15, React 19, Tailwind CSS | Giao diện registry và trang quản trị |
-| Database | PostgreSQL 17, Prisma ORM | Dữ liệu nghiệp vụ, migration và truy vấn |
-| Queue/cache | Valkey 8 | Hàng đợi xử lý nền và điều phối Worker |
-| Package storage | Local disk/Docker volume | Lưu archive package `.tar.gz` |
-| CLI | Dart 3 | Đăng nhập, cấu hình, publish và quản lý dependency |
-| AI integration | Model Context Protocol (MCP) | Kết nối công cụ AI với registry nội bộ |
-| Kiểm thử | Vitest, Dart test | Unit test và contract test |
-| Đóng gói | Docker, Docker Compose | Triển khai Web, API, Worker và hạ tầng |
+| Nhóm             | Công nghệ                              | Mục đích                                           |
+| ---------------- | -------------------------------------- | -------------------------------------------------- |
+| Monorepo         | pnpm, Turborepo                        | Quản lý workspace, build và test đồng bộ           |
+| Ngôn ngữ backend | TypeScript, Node.js 22+                | Xây dựng API, Worker và package dùng chung         |
+| API              | Fastify 5, Zod, Swagger/OpenAPI        | HTTP API, validation và tài liệu API               |
+| Web              | Next.js 15, React 19, Tailwind CSS     | Giao diện registry và trang quản trị               |
+| Database         | PostgreSQL 17, Prisma ORM              | Dữ liệu nghiệp vụ, migration và truy vấn           |
+| Queue/cache      | Valkey 8                               | Hàng đợi xử lý nền và điều phối Worker             |
+| Package storage  | Local disk/Docker volume               | Lưu archive package `.tar.gz`                      |
+| Quản lý SDK      | FVM 3.2.1, Flutter 3.41.9, Dart 3.11.5 | Ghim và đồng bộ SDK giữa local/Docker              |
+| CLI              | Dart 3 qua FVM                         | Đăng nhập, cấu hình, publish và quản lý dependency |
+| AI integration   | Model Context Protocol (MCP)           | Kết nối công cụ AI với registry nội bộ             |
+| Kiểm thử         | Vitest, Dart test                      | Unit test và contract test                         |
+| Đóng gói         | Docker, Docker Compose                 | Triển khai Web, API, Worker và hạ tầng             |
 
 ## Cấu trúc repository
 

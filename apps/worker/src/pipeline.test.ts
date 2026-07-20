@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { calculateScore, createPipeline, runPipeline } from "./pipeline.js";
+import {
+  calculateScore,
+  createPipeline,
+  fvmCommand,
+  runPipeline,
+} from "./pipeline.js";
 
 describe("analysis pipeline", () => {
   it("runs every local mock step", async () => {
@@ -46,6 +51,23 @@ describe("analysis pipeline", () => {
       else process.env.NODE_ENV = previousNodeEnv;
       if (previousSandbox === undefined) delete process.env.ANALYZER_SANDBOXED;
       else process.env.ANALYZER_SANDBOXED = previousSandbox;
+    }
+  });
+  it("runs every SDK command through FVM", () => {
+    const previous = process.env.FVM_EXECUTABLE;
+    process.env.FVM_EXECUTABLE = "/opt/fvm/bin/fvm";
+    try {
+      expect(fvmCommand("dart", ["analyze"])).toEqual({
+        command: "/opt/fvm/bin/fvm",
+        args: ["dart", "analyze"],
+      });
+      expect(fvmCommand("flutter", ["analyze"])).toEqual({
+        command: "/opt/fvm/bin/fvm",
+        args: ["flutter", "analyze"],
+      });
+    } finally {
+      if (previous === undefined) delete process.env.FVM_EXECUTABLE;
+      else process.env.FVM_EXECUTABLE = previous;
     }
   });
 });

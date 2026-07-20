@@ -5,13 +5,15 @@ import 'credentials.dart';
 import 'registry_client.dart';
 
 final class PubTokenRegistrar {
-  const PubTokenRegistrar();
+  const PubTokenRegistrar({this.fvmExecutable = 'fvm'});
+
+  final String fvmExecutable;
 
   Future<void> registerToken(Uri rawHost, String token) async {
     final host = normalizeRegistryHost(rawHost);
     final process = await Process.start(
-      'dart',
-      ['pub', 'token', 'add', host.toString()],
+      fvmExecutable,
+      ['dart', 'pub', 'token', 'add', host.toString()],
       runInShell: Platform.isWindows,
     );
     final stdoutTask = process.stdout.transform(utf8.decoder).join();
@@ -23,8 +25,8 @@ final class PubTokenRegistrar {
     if (code != 0) {
       throw RegistryException(
         processOutput.isEmpty
-            ? 'dart pub token add failed with exit code $code.'
-            : 'dart pub token add failed: $processOutput',
+            ? 'fvm dart pub token add failed with exit code $code.'
+            : 'fvm dart pub token add failed: $processOutput',
       );
     }
   }
@@ -35,8 +37,9 @@ final class PubTokenRegistrar {
       throw const FormatException('Invalid environment variable name.');
     }
     final result = await Process.run(
-      'dart',
+      fvmExecutable,
       [
+        'dart',
         'pub',
         'token',
         'add',
@@ -50,8 +53,8 @@ final class PubTokenRegistrar {
       final output = '${result.stdout}${result.stderr}'.trim();
       throw RegistryException(
         output.isEmpty
-            ? 'dart pub token add failed with exit code ${result.exitCode}.'
-            : 'dart pub token add failed: $output',
+            ? 'fvm dart pub token add failed with exit code ${result.exitCode}.'
+            : 'fvm dart pub token add failed: $output',
       );
     }
   }

@@ -3,6 +3,7 @@ import { headers } from "next/headers";
 import { Nav } from "@/components/nav";
 import { LanguageProvider } from "@/components/language-provider";
 import { Footer } from "@/components/footer";
+import { getSystemInfo } from "@/lib/api";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -19,13 +20,14 @@ export default async function RootLayout({
   // Nonce-based CSP requires per-request rendering so Next can attach the
   // middleware nonce to its framework and hydration scripts.
   await headers();
+  const systemInfo = await getSystemInfo();
   return (
     <html lang="vi" suppressHydrationWarning>
       <body>
         <LanguageProvider>
           <Nav />
           {children}
-          <Footer />
+          <Footer systemInfo={systemInfo} />
         </LanguageProvider>
       </body>
     </html>

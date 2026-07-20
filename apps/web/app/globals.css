@@ -2402,11 +2402,26 @@ footer {
   background: var(--surface);
   color: var(--muted);
 }
-footer div {
+.footer-brand {
   display: grid;
+  gap: 2px;
 }
 footer strong {
   color: var(--text);
+}
+.footer-versions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+.footer-versions span {
+  padding: 3px 7px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--muted);
+  font: 600 10px/1.2 var(--font-mono, monospace);
 }
 footer nav {
   display: flex;

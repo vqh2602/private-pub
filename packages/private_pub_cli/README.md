@@ -10,19 +10,24 @@ installed Dart or Flutter SDK. They deliberately do **not** forward a global
 `PUB_HOSTED_URL`: Pub has no fallback from a private host to pub.dev, so a
 global value would make public dependencies fail resolution. Declare the
 private host on each private dependency instead. Lockfiles, Pub workspaces,
-authentication configured with `dart pub token`, and the Pub version solver
+authentication configured with `fvm dart pub token`, and the Pub version solver
 therefore keep their standard behavior.
+
+FVM is required. Every Dart and Flutter SDK subprocess started by this CLI is
+executed through `fvm`; direct system `dart` or `flutter` executables are never
+used. Set `FVM_EXECUTABLE` only when the FVM binary is installed at a custom
+path.
 
 ## Install
 
 ```bash
-dart pub global activate private_pub_cli
+fvm dart pub global activate private_pub_cli
 ```
 
 During local development:
 
 ```bash
-dart pub global activate --source path .
+fvm dart pub global activate --source path .
 ```
 
 ## Login and configure
@@ -48,7 +53,8 @@ private_pub --host https://pub.company.dev setup --env-var PRIVATE_PUB_TOKEN
 ## Registry selection
 
 Pass `--host` before private metadata commands (`check`, `versions`, and
-`compare`). This affects only `private_pub`, not `dart pub` or `flutter pub`
+`compare`). This affects only `private_pub`, not `fvm dart pub` or
+`fvm flutter pub`
 commands started directly from the same shell:
 
 ```bash
@@ -58,7 +64,7 @@ private_pub --host https://pub.company.dev versions company_ui
 
 Avoid exporting `PUB_HOSTED_URL` in a shell that also runs normal Pub commands:
 an exported environment variable is inherited by every child process, including
-direct `dart pub` and `flutter pub` invocations.
+direct `fvm dart pub` and `fvm flutter pub` invocations.
 
 For a project that uses both pub.dev and a private registry, pin the registry
 on every private package in `pubspec.yaml`:
@@ -168,9 +174,9 @@ private_pub upgrade --major-versions
 private_pub upgrade --major-versions --dry-run
 ```
 
-The CLI automatically chooses `flutter pub` when the project has an SDK
-dependency on Flutter; otherwise it uses `dart pub`. Override detection with
-`--sdk=dart` or `--sdk=flutter`.
+The CLI automatically chooses `fvm flutter pub` when the project has an SDK
+dependency on Flutter; otherwise it uses `fvm dart pub`. Override detection
+with `--sdk=dart` or `--sdk=flutter`.
 
 Use `-C path/to/project` to run against another project directory.
 
@@ -185,6 +191,6 @@ Use `-C path/to/project` to run against another project directory.
 
 ## Security
 
-Prefer `dart pub token add` for `outdated` and `upgrade`. For metadata commands,
+Prefer `fvm dart pub token add` for `outdated` and `upgrade`. For metadata commands,
 pass the name of an environment variable with `--token-env`; never put a token
 directly in command arguments or commit it to a pubspec.

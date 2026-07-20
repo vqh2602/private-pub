@@ -31,6 +31,7 @@ import {
 } from "./security.js";
 import { hashPassword, verifyPassword } from "./password.js";
 import { InvalidArchiveError } from "./archive.js";
+import { getSystemInfo } from "./system-info.js";
 
 const nameParams = z.object({ name: z.string() });
 const versionParams = nameParams.extend({ version: z.string() });
@@ -174,6 +175,7 @@ export async function registerRoutes(
     mode: repository.mode,
     timestamp: new Date().toISOString(),
   }));
+  app.get("/v1/system/info", async () => getSystemInfo());
 
   app.post(
     "/v1/auth/login",

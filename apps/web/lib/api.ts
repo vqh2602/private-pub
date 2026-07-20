@@ -22,6 +22,35 @@ export interface PackageFilters {
   publisher?: string;
 }
 
+export interface SystemInfo {
+  appVersion: string;
+  sdkProvider: "fvm";
+  fvmVersion: string | null;
+  flutterVersion: string | null;
+  dartVersion: string | null;
+  available: boolean;
+}
+
+export async function getSystemInfo(): Promise<SystemInfo> {
+  try {
+    const response = await fetch(`${serverApi}/v1/system/info`, {
+      cache: "no-store",
+      signal: AbortSignal.timeout(30_000),
+    });
+    if (!response.ok) throw new Error(String(response.status));
+    return response.json();
+  } catch {
+    return {
+      appVersion: process.env.APP_VERSION?.trim() || "0.1.0",
+      sdkProvider: "fvm",
+      fvmVersion: null,
+      flutterVersion: null,
+      dartVersion: null,
+      available: false,
+    };
+  }
+}
+
 export async function searchPackages(
   q = "",
   sort = "relevance",

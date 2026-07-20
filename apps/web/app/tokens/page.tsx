@@ -353,14 +353,16 @@ export default function TokensPage() {
         )}
         <section className="cli-setup">
           <span className="eyebrow">CLI quick start</span>
-          <h2>Connect dart pub</h2>
+          <h2>Connect FVM Dart Pub</h2>
           <p>
             Chạy lệnh rồi dán token khi Dart hỏi{" "}
             <code>Enter secret token:</code>. Không chạy token như một lệnh
             shell.
           </p>
-          <CopySnippet>dart pub token add http://localhost:4000</CopySnippet>
-          <CopySnippet>dart pub get</CopySnippet>
+          <CopySnippet>
+            fvm dart pub token add http://localhost:4000
+          </CopySnippet>
+          <CopySnippet>fvm dart pub get</CopySnippet>
         </section>
       </div>
     </main>

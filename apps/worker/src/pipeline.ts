@@ -31,6 +31,21 @@ export interface AnalysisStep {
   run(context: AnalysisContext): Promise<StepResult>;
 }
 
+export interface FvmCommand {
+  command: string;
+  args: string[];
+}
+
+export function fvmCommand(
+  sdk: "dart" | "flutter",
+  args: string[],
+): FvmCommand {
+  return {
+    command: process.env.FVM_EXECUTABLE?.trim() || "fvm",
+    args: [sdk, ...args],
+  };
+}
+
 export class HookStep implements AnalysisStep {
   constructor(
     public name: string,
@@ -150,20 +165,29 @@ export function createPipeline(
     throw new Error(
       "SDK analysis is disabled until ANALYZER_SANDBOXED=true is set by an isolated runner.",
     );
+  const pana = fvmCommand("dart", [
+    "pub",
+    "global",
+    "run",
+    "pana",
+    "--no-warning",
+  ]);
+  const dartAnalyze = fvmCommand("dart", ["analyze", "--format=json"]);
+  const flutterAnalyze = fvmCommand("flutter", ["analyze"]);
+  const dartdoc = fvmCommand("dart", ["doc"]);
   return [
     new HookStep("load-archive"),
     new HookStep("validate-unpack"),
     new HookStep("malware-scan"), // Replace with ClamAV/container-scanner adapter in production.
-    new CommandStep("pana", "dart", [
-      "pub",
-      "global",
-      "run",
-      "pana",
-      "--no-warning",
-    ]),
-    new CommandStep("dart-analyze", "dart", ["analyze", "--format=json"]),
-    new CommandStep("flutter-analyze", "flutter", ["analyze"], true),
-    new CommandStep("dartdoc", "dart", ["doc"]),
+    new CommandStep("pana", pana.command, pana.args),
+    new CommandStep("dart-analyze", dartAnalyze.command, dartAnalyze.args),
+    new CommandStep(
+      "flutter-analyze",
+      flutterAnalyze.command,
+      flutterAnalyze.args,
+      true,
+    ),
+    new CommandStep("dartdoc", dartdoc.command, dartdoc.args),
     new HookStep("persist-findings"),
     new HookStep("index-search"),
   ];
@@ -177,6 +201,8 @@ function analyzerEnvironment(): NodeJS.ProcessEnv {
     "PUB_CACHE",
     "FLUTTER_ROOT",
     "DART_SDK",
+    "FVM_CACHE_PATH",
+    "FVM_HOME",
     "LANG",
     "LC_ALL",
   ];
