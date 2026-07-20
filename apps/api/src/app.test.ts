@@ -1,12 +1,17 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { FastifyInstance } from "fastify";
 import { buildApp } from "./app.js";
-import { validateArchiveIndex } from "./archive.js";
+import {
+  parsePackageArchive,
+  readArchiveTextFile,
+  validateArchiveIndex,
+} from "./archive.js";
 import { packageDetailSchema } from "@private-pub/contracts";
 import { readFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { DemoRegistryRepository, hashToken } from "./repository.js";
 import { hashPassword, verifyPassword } from "./password.js";
 import { issueToken } from "./security.js";
@@ -240,6 +245,32 @@ describe("registry API", () => {
       expect(scored.json().grantedPoints).toBeGreaterThan(0);
       expect(scored.json().breakdown).toHaveLength(5);
 
+      const fileIndex = await isolated.inject({
+        method: "GET",
+        url: "/v1/packages/sample_package/versions/1.0.0/files",
+      });
+      expect(fileIndex.statusCode).toBe(200);
+      expect(
+        fileIndex
+          .json()
+          .entries.every(
+            (entry: { content?: string }) => entry.content === undefined,
+          ),
+      ).toBe(true);
+      const sourceFile = await isolated.inject({
+        method: "GET",
+        url: "/v1/packages/sample_package/versions/1.0.0/files/lib/sample_package.dart",
+      });
+      expect(sourceFile.statusCode).toBe(200);
+      expect(sourceFile.json().content).toContain("fixtureGreeting");
+      const downloaded = await isolated.inject({
+        method: "GET",
+        url: "/api/packages/sample_package/versions/1.0.0.tar.gz",
+      });
+      expect(downloaded.statusCode).toBe(200);
+      expect(downloaded.headers["content-type"]).toContain("application/gzip");
+      expect(downloaded.rawPayload.equals(firstArchive)).toBe(true);
+
       const secondUpload = multipartArchive(
         archiveWithVersion(firstArchive, "1.0.0", "1.1.0"),
       );
@@ -463,9 +494,9 @@ describe("registry API", () => {
         (await restarted.getPackage("sample_package"))?.latestVersion.version,
       ).toBe("1.0.0");
       expect(
-        (await restarted.getArchive("sample_package", "1.0.0"))?.equals(
-          archive,
-        ),
+        readFileSync(
+          (await restarted.getArchivePath("sample_package", "1.0.0"))!,
+        ).equals(archive),
       ).toBe(true);
     } finally {
       await rm(directory, { recursive: true, force: true });
@@ -486,6 +517,24 @@ describe("registry API", () => {
 });
 
 describe("archive validation", () => {
+  it("indexes from disk without retaining source contents in memory", async () => {
+    const archivePath = fileURLToPath(
+      new URL(
+        "../../../fixtures/archives/sample_package-1.0.0.tar.gz",
+        import.meta.url,
+      ),
+    );
+    const parsed = await parsePackageArchive(archivePath);
+    expect(parsed.files.length).toBeGreaterThan(0);
+    expect(parsed.files.every((file) => file.content === undefined)).toBe(true);
+    expect(
+      await readArchiveTextFile(archivePath, "lib/sample_package.dart"),
+    ).toContain("fixtureGreeting");
+    expect(
+      await readArchiveTextFile(archivePath, "lib/missing.dart"),
+    ).toBeUndefined();
+  });
+
   it("rejects traversal and unsafe symlinks", () => {
     const result = validateArchiveIndex([
       { path: "../secret", size: 12, type: "file" },

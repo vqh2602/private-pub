@@ -24,14 +24,17 @@ import {
   access,
   copyFile,
   mkdir,
-  readFile,
   rename,
   rm,
   writeFile,
 } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import semver from "semver";
-import { parsePackageArchive, type ParsedPackageArchive } from "./archive.js";
+import {
+  parsePackageArchive,
+  readArchiveTextFile,
+  type ParsedPackageArchive,
+} from "./archive.js";
 import type {
   AccountRecord,
   AccessActor,
@@ -378,7 +381,9 @@ export class PrismaRegistryRepository implements RegistryRepository {
       readme: latest.readmeHtml ?? `# ${item.name}`,
       changelog:
         latest.changelogHtml ?? "# Changelog\n\nNo changelog was included.",
-      files: await Promise.all(files.map((file) => this.mapFile(file, false))),
+      files: await Promise.all(
+        files.map((file) => this.mapFile(file, false, latest.archiveObjectKey)),
+      ),
     };
   }
 
@@ -401,7 +406,11 @@ export class PrismaRegistryRepository implements RegistryRepository {
     return item
       ? Promise.all(
           item.files.map((file) =>
-            this.mapFile(file, options.includeContent !== false),
+            this.mapFile(
+              file,
+              options.includeContent === true,
+              item.archiveObjectKey,
+            ),
           ),
         )
       : null;
@@ -410,8 +419,11 @@ export class PrismaRegistryRepository implements RegistryRepository {
   async getFile(name: string, version: string, path: string) {
     const item = await this.prisma.packageFile.findFirst({
       where: { version: { package: { name }, version }, path },
+      include: { version: { select: { archiveObjectKey: true } } },
     });
-    return item ? this.mapFile(item, true) : null;
+    return item
+      ? this.mapFile(item, true, item.version.archiveObjectKey)
+      : null;
   }
 
   async getScore(name: string, version: string) {
@@ -678,13 +690,6 @@ export class PrismaRegistryRepository implements RegistryRepository {
       `${objectId}.tar.gz`,
     );
     const temporaryPath = `${archivePath}.${randomUUID()}.tmp`;
-    const previewDirectory = join(
-      this.storageDirectory,
-      "files",
-      parsed.name,
-      parsed.version,
-      objectId,
-    );
     const files: Array<{
       path: string;
       kind: string;
@@ -699,31 +704,27 @@ export class PrismaRegistryRepository implements RegistryRepository {
     }> = [];
     try {
       await mkdir(dirname(archivePath), { recursive: true });
-      await mkdir(previewDirectory, { recursive: true });
       if (Buffer.isBuffer(archive))
         await writeFile(temporaryPath, archive, { flag: "wx" });
       else await copyFile(archive, temporaryPath);
       await rename(temporaryPath, archivePath);
       for (const [index, file] of parsed.files.entries()) {
-        const previewPath =
-          file.content === undefined
-            ? `${archivePath}#${file.path}`
-            : join(
-                previewDirectory,
-                `${createHash("sha256").update(file.path).digest("hex")}.txt`,
-              );
-        if (file.content !== undefined)
-          await writeFile(previewPath, file.content, "utf8");
+        const isText =
+          file.type === "file" &&
+          file.preview !== "unsupported" &&
+          file.preview !== "image";
         files.push({
           path: file.path,
           kind: file.type,
           sizeBytes: BigInt(file.size ?? 0),
           mimeType: null,
           sha256: createHash("sha256")
-            .update(file.content ?? `${file.path}:${file.size ?? 0}`)
+            .update(`${file.path}:${file.size ?? 0}`)
             .digest("hex"),
-          storageKey: previewPath,
-          isText: file.content !== undefined,
+          // The path points to an entry inside PackageVersion.archiveObjectKey;
+          // no extracted preview file is persisted alongside the tarball.
+          storageKey: file.path,
+          isText,
           language: file.language,
           previewStatus:
             file.preview && file.preview !== "unsupported"
@@ -737,7 +738,6 @@ export class PrismaRegistryRepository implements RegistryRepository {
       await Promise.allSettled([
         rm(temporaryPath, { force: true }),
         rm(archivePath, { force: true }),
-        rm(previewDirectory, { recursive: true, force: true }),
       ]);
       if (
         error instanceof Prisma.PrismaClientKnownRequestError &&
@@ -751,20 +751,6 @@ export class PrismaRegistryRepository implements RegistryRepository {
       version: parsed.version,
       packageCreated: !existingPackage,
     };
-  }
-
-  async getArchive(name: string, version: string) {
-    const item = await this.prisma.packageVersion.findFirst({
-      where: { package: { name }, version },
-      select: { archiveObjectKey: true },
-    });
-    if (!item) return null;
-    try {
-      return await readFile(item.archiveObjectKey);
-    } catch (error) {
-      if (isMissingFile(error)) return null;
-      throw error;
-    }
   }
 
   async getArchivePath(name: string, version: string) {
@@ -1105,11 +1091,12 @@ export class PrismaRegistryRepository implements RegistryRepository {
   private async mapFile(
     file: DatabaseFile,
     includeContent: boolean,
+    archivePath: string,
   ): Promise<PackageFile> {
     let content: string | undefined;
     if (includeContent && file.isText) {
       try {
-        content = await readFile(file.storageKey, "utf8");
+        content = await readArchiveTextFile(archivePath, file.path);
       } catch (error) {
         if (!isMissingFile(error)) throw error;
       }

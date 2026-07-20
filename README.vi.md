@@ -60,10 +60,13 @@ Chế độ database là mặc định an toàn. Chỉ đặt tường minh `DEM
 
 ```bash
 cp .env.example .env
-docker compose up
+docker compose up --build -d
+docker compose ps
 ```
 
-PostgreSQL và Valkey chỉ bind vào loopback ở cổng `5432` và `6379`. Development stack chưa khởi động object storage cho tới khi adapter S3 được triển khai; archive hiện nằm trong `ARCHIVE_STORAGE_DIR`.
+Docker image build API, Web và Worker trước khi chạy; source code không được bind-mount vào container. Migration PostgreSQL đã commit được áp dụng tự động khi API khởi động. PostgreSQL và Valkey chỉ bind vào loopback ở cổng `5432` và `6379`.
+
+Archive được lưu dưới dạng `.tar.gz` trong named volume `archive-data` tại `/data/archives`; PostgreSQL dùng volume `postgres-data`. `docker compose down` giữ nguyên cả hai volume, còn `docker compose down --volumes` sẽ xóa toàn bộ dữ liệu local này.
 
 ## Database
 
@@ -160,7 +163,9 @@ docker compose down --volumes
 
 ### Chế độ lưu trữ hiện tại của ứng dụng
 
-Đặt `DEMO_MODE=false` để API sử dụng `PrismaRegistryRepository`. Metadata package, phiên bản, dependency, chỉ mục tệp, điểm số, import, API token, trạng thái thu hồi và trạng thái ngừng phát hành khi đó được đọc từ và ghi vào PostgreSQL. Archive nhị phân và text preview vẫn nằm ở `ARCHIVE_STORAGE_DIR`; adapter S3 vẫn là bước tăng cường riêng cho production.
+Đặt `DEMO_MODE=false` để API sử dụng `PrismaRegistryRepository`. Metadata package, phiên bản, dependency, chỉ mục tệp, điểm số, import, API token, trạng thái thu hồi và trạng thái ngừng phát hành khi đó được đọc từ và ghi vào PostgreSQL.
+
+Ở database mode, nội dung các file source trong trình duyệt file không nằm trong RAM hay các file preview rời; PostgreSQL chỉ giữ metadata/chỉ mục cùng README/CHANGELOG phục vụ tìm kiếm và trang chi tiết. Mỗi version tham chiếu đến một archive `.tar.gz` bất biến trong `ARCHIVE_STORAGE_DIR`; endpoint download stream trực tiếp từ disk. Khi người dùng mở một file, API chỉ giải nén entry được yêu cầu với giới hạn `MAX_TEXT_PREVIEW_BYTES` (mặc định 512.000 byte). RAM chỉ giữ metadata và buffer ngắn hạn của đúng entry đang được xem.
 
 Đặt `PUBLISHER_ID=platform.internal` để publisher của package publish mới là `platform.internal`. Biến này cho phép thay publisher theo môi trường mà không cần sửa mã nguồn.
 
@@ -239,8 +244,8 @@ cũng sẽ bị tìm ở registry private. `private_pub upgrade` và `private_pu
 outdated` không truyền biến này sang Pub; hãy dùng khai báo `hosted:` cho từng
 package private như ví dụ trên. Ở demo mode, archive mới publish sẽ được parse,
 lập chỉ mục và lưu trong `DEMO_STORAGE_DIR` (mặc định `.private-pub-data/archives`)
-để vẫn khả dụng qua các lần khởi động lại API. Archive lịch sử được seed trả về
-`501` cho tới khi cấu hình `S3ArchiveStore`.
+để vẫn khả dụng qua các lần khởi động lại API. Dữ liệu demo seed chỉ có metadata;
+download archive seed không tồn tại sẽ trả về `404`.
 
 ## Tổng quan API
 
@@ -297,7 +302,7 @@ Bộ kiểm thử API bao phủ metadata Hosted Pub, xếp hạng tìm kiếm, t
 
 Trước khi triển khai ra Internet:
 
-1. Chuyển vùng lưu archive/text preview cục bộ từ `ARCHIVE_STORAGE_DIR` sang `S3ArchiveStore` có URL upload/download đã ký, thời hạn ngắn và object key bất biến.
+1. Khi cần chạy nhiều API node, chuyển archive từ `ARCHIVE_STORAGE_DIR` sang `S3ArchiveStore` có URL upload/download đã ký, thời hạn ngắn và object key bất biến.
 2. Thêm giao diện ủy quyền và thu hồi quyền package owner/writer đang được luồng publish kiểm tra trong database.
 3. Parse và lập chỉ mục archive `.tar.gz` trong runner cô lập có giới hạn nén/giải nén, giới hạn entry, timeout, không có network, root filesystem chỉ đọc và CPU/bộ nhớ bị giới hạn.
 4. Kết nối hàng đợi bền vững (Valkey/BullMQ, Temporal hoặc cloud queue), idempotency key, retry, xử lý poison job và worker lease.

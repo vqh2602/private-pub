@@ -60,10 +60,13 @@ To run the infrastructure and applications in containers:
 
 ```bash
 cp .env.example .env
-docker compose up
+docker compose up --build -d
+docker compose ps
 ```
 
-PostgreSQL and Valkey bind to loopback ports `5432` and `6379`. Object storage is not started by the development stack until the S3 adapter is implemented; archive data remains under `ARCHIVE_STORAGE_DIR`.
+The image builds the API, Web, and Worker before starting; source code is not bind-mounted into the containers. Committed PostgreSQL migrations are deployed automatically when the API starts. PostgreSQL and Valkey bind to loopback ports `5432` and `6379`.
+
+Package `.tar.gz` files live in the `archive-data` named volume at `/data/archives`; PostgreSQL uses `postgres-data`. `docker compose down` preserves both volumes, while `docker compose down --volumes` removes all local container data.
 
 ## Database
 
@@ -160,7 +163,9 @@ docker compose down --volumes
 
 ### Current application persistence mode
 
-Set `DEMO_MODE=false` to make the API use `PrismaRegistryRepository`. Package metadata, versions, dependencies, file indexes, scores, imports, API tokens, retractions, and discontinue state are then read from and written to PostgreSQL. Archive binaries and text previews remain in `ARCHIVE_STORAGE_DIR`; the S3 adapter is still a separate production-hardening step.
+Set `DEMO_MODE=false` to make the API use `PrismaRegistryRepository`. Package metadata, versions, dependencies, file indexes, scores, imports, API tokens, retractions, and discontinue state are then read from and written to PostgreSQL.
+
+In database mode, source-file bodies used by the file explorer are not retained in RAM or separate preview files; PostgreSQL keeps the metadata/index plus README and CHANGELOG text used by search and detail pages. Each version points to one immutable `.tar.gz` under `ARCHIVE_STORAGE_DIR`; downloads stream directly from disk. A file preview extracts only the requested entry, bounded by `MAX_TEXT_PREVIEW_BYTES` (512,000 bytes by default). RAM therefore holds metadata plus the short-lived buffer for the single entry being viewed.
 
 Set `PUBLISHER_ID=platform.internal` to assign newly published packages to `platform.internal`. This allows each environment to select its publisher without changing source code.
 
@@ -214,7 +219,7 @@ private registry. Use `private_pub --host http://localhost:4000` for private
 metadata commands instead. In demo mode, newly published archives are parsed,
 indexed, and stored under `DEMO_STORAGE_DIR` (default
 `.private-pub-data/archives`) so they remain available across API restarts.
-Seeded historical archives return `501` until an `S3ArchiveStore` is configured.
+Seed data contains metadata only; a missing seeded archive download returns `404`.
 
 ## API overview
 
@@ -271,7 +276,7 @@ The API suite covers Hosted Pub metadata, search ranking, retraction/restore, tr
 
 Before an internet-facing deployment:
 
-1. Move local archive/text-preview storage from `ARCHIVE_STORAGE_DIR` to an `S3ArchiveStore` with short-lived signed upload/download URLs and immutable object keys.
+1. For a multi-node API deployment, move archives from `ARCHIVE_STORAGE_DIR` to an `S3ArchiveStore` with short-lived signed upload/download URLs and immutable object keys.
 2. Add UI workflows for delegating and revoking the database-backed package owner/writer permissions enforced by publish operations.
 3. Parse and index `.tar.gz` archives in an isolated runner with compressed/uncompressed limits, entry limits, timeouts, no network, read-only root filesystem, and constrained CPU/memory.
 4. Connect a durable queue (Valkey/BullMQ, Temporal, or a cloud queue), idempotency keys, retries, poison-job handling, and worker leases.

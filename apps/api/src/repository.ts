@@ -12,18 +12,19 @@ import type {
   TokenRecord,
 } from "./domain.js";
 import { PackageVersionConflictError } from "./domain.js";
-import { parsePackageArchive } from "./archive.js";
+import { parsePackageArchive, readArchiveTextFile } from "./archive.js";
 import semver from "semver";
 import {
   copyFile,
   mkdir,
-  readFile,
+  mkdtemp,
   readdir,
   rename,
   rm,
   writeFile,
 } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import { scoreParsedPackage } from "./scoring.js";
 import { releaseChannel, selectLatestRelease } from "./release-channel.js";
 
@@ -32,8 +33,8 @@ export class DemoRegistryRepository implements RegistryRepository {
   private readonly details = structuredClone(demoDetails);
   private readonly imports = new Map<string, ImportJobRecord>();
   private readonly tokens = new Map<string, TokenRecord>();
-  private readonly archives = new Map<string, Buffer>();
   private readonly archivePaths = new Map<string, string>();
+  private readonly filesByVersion = new Map<string, PackageFile[]>();
   private readonly packageOwners = new Map<string, string>();
   private readonly accounts = new Map<string, AccountRecord>();
   private readonly sessions = new Map<
@@ -44,28 +45,38 @@ export class DemoRegistryRepository implements RegistryRepository {
   constructor(
     private readonly storageDirectory?: string,
     private readonly publisherId = "platform.internal",
-  ) {}
+  ) {
+    // Demo fixtures are metadata only. Published source is always read from its
+    // archive on disk instead of being retained in the repository object.
+    for (const detail of this.details.values())
+      for (const file of detail.files) delete file.content;
+  }
+
+  private archiveDirectory?: string;
+  private temporaryArchiveDirectory = false;
 
   async initialize() {
-    if (!this.storageDirectory) return;
-    const directory = resolve(this.storageDirectory);
+    const directory = this.storageDirectory
+      ? resolve(this.storageDirectory)
+      : await mkdtemp(join(tmpdir(), "private-pub-demo-archives-"));
+    this.archiveDirectory = directory;
+    this.temporaryArchiveDirectory = !this.storageDirectory;
     await mkdir(directory, { recursive: true });
-    const filenames = (await readdir(directory))
-      .filter((filename) => filename.endsWith(".tar.gz"))
-      .sort();
-    for (const filename of filenames) {
-      const archive = await readFile(join(directory, filename));
-      const parsed = await parsePackageArchive(archive);
+    const archivePaths = (await findArchivePaths(directory)).sort();
+    for (const archivePath of archivePaths) {
+      const parsed = await parsePackageArchive(archivePath);
       this.registerParsedArchive(
         parsed,
-        archive,
         { id: "restored-archive", username: "Unknown" },
-        join(directory, filename),
+        archivePath,
       );
     }
   }
 
-  async close() {}
+  async close() {
+    if (this.temporaryArchiveDirectory && this.archiveDirectory)
+      await rm(this.archiveDirectory, { recursive: true, force: true });
+  }
 
   async getStats() {
     const details = [...this.details.values()];
@@ -207,9 +218,21 @@ export class DemoRegistryRepository implements RegistryRepository {
     options: { includeContent?: boolean } = {},
   ) {
     if (!(await this.getVersion(name, version))) return null;
-    const files = structuredClone(this.details.get(name)?.files ?? []);
-    if (options.includeContent === false)
-      for (const file of files) delete file.content;
+    const key = `${name}@${version}`;
+    const files = structuredClone(
+      this.filesByVersion.get(key) ?? this.details.get(name)?.files ?? [],
+    );
+    if (options.includeContent === true) {
+      const archivePath = this.archivePaths.get(key);
+      if (archivePath)
+        for (const file of files)
+          if (
+            file.type === "file" &&
+            file.preview !== "unsupported" &&
+            file.preview !== "image"
+          )
+            file.content = await readArchiveTextFile(archivePath, file.path);
+    }
     return files;
   }
   async getFile(
@@ -217,11 +240,18 @@ export class DemoRegistryRepository implements RegistryRepository {
     version: string,
     path: string,
   ): Promise<PackageFile | null> {
-    return (
-      (await this.getFiles(name, version, { includeContent: true }))?.find(
-        (item) => item.path === path,
-      ) ?? null
-    );
+    const files = await this.getFiles(name, version, { includeContent: false });
+    const file = files?.find((item) => item.path === path);
+    if (!file) return null;
+    const archivePath = this.archivePaths.get(`${name}@${version}`);
+    if (
+      archivePath &&
+      file.type === "file" &&
+      file.preview !== "unsupported" &&
+      file.preview !== "image"
+    )
+      file.content = await readArchiveTextFile(archivePath, file.path);
+    return file;
   }
   async getScore(name: string, version: string) {
     return (await this.getVersion(name, version))
@@ -379,36 +409,32 @@ export class DemoRegistryRepository implements RegistryRepository {
     }
     if (existing?.versions.some((item) => item.version === parsed.version))
       throw new PackageVersionConflictError(parsed.name, parsed.version);
+    const storageDirectory = await this.ensureArchiveDirectory();
     let storedPath: string | undefined;
     let temporaryPath: string | undefined;
     try {
-      if (this.storageDirectory) {
-        const directory = resolve(this.storageDirectory);
-        await mkdir(directory, { recursive: true });
-        const destination = join(
-          directory,
-          `${parsed.name}-${parsed.version}-${randomUUID()}.tar.gz`,
-        );
-        temporaryPath = `${destination}.${randomUUID()}.tmp`;
-        if (Buffer.isBuffer(archive))
-          await writeFile(temporaryPath, archive, { flag: "wx" });
-        else await copyFile(archive, temporaryPath);
-        await rename(temporaryPath, destination);
-        temporaryPath = undefined;
-        storedPath = destination;
-      }
+      const destination = join(
+        storageDirectory,
+        "objects",
+        parsed.name,
+        parsed.version,
+        `${randomUUID()}.tar.gz`,
+      );
+      await mkdir(dirname(destination), { recursive: true });
+      temporaryPath = `${destination}.${randomUUID()}.tmp`;
+      if (Buffer.isBuffer(archive))
+        await writeFile(temporaryPath, archive, { flag: "wx" });
+      else await copyFile(archive, temporaryPath);
+      await rename(temporaryPath, destination);
+      temporaryPath = undefined;
+      storedPath = destination;
     } catch (error) {
       if (temporaryPath) await rm(temporaryPath, { force: true });
       if (storedPath) await rm(storedPath, { force: true });
       throw error;
     }
-    const archiveBuffer = Buffer.isBuffer(archive)
-      ? archive
-      : storedPath
-        ? Buffer.alloc(0)
-        : await readFile(archive);
     try {
-      this.registerParsedArchive(parsed, archiveBuffer, actor, storedPath);
+      this.registerParsedArchive(parsed, actor, storedPath);
     } catch (error) {
       if (storedPath) await rm(storedPath, { force: true });
       throw error;
@@ -423,9 +449,8 @@ export class DemoRegistryRepository implements RegistryRepository {
 
   private registerParsedArchive(
     parsed: Awaited<ReturnType<typeof parsePackageArchive>>,
-    archive: Buffer,
     actor: PublishActor,
-    archivePath?: string,
+    archivePath: string,
   ) {
     const existing = this.details.get(parsed.name);
     if (existing?.versions.some((item) => item.version === parsed.version))
@@ -487,7 +512,7 @@ export class DemoRegistryRepository implements RegistryRepository {
         );
         existing.readme = parsed.readme;
         existing.changelog = parsed.changelog;
-        existing.files = parsed.files;
+        existing.files = structuredClone(parsed.files);
       }
     } else {
       this.details.set(parsed.name, {
@@ -517,23 +542,32 @@ export class DemoRegistryRepository implements RegistryRepository {
         score: calculatedScore,
         readme: parsed.readme,
         changelog: parsed.changelog,
-        files: parsed.files,
+        files: structuredClone(parsed.files),
       });
     }
     const archiveKey = `${parsed.name}@${parsed.version}`;
-    if (archive.length) this.archives.set(archiveKey, Buffer.from(archive));
-    if (archivePath) this.archivePaths.set(archiveKey, archivePath);
-  }
-  async getArchive(name: string, version: string) {
-    const key = `${name}@${version}`;
-    const archive = this.archives.get(key);
-    if (archive) return archive;
-    const path = this.archivePaths.get(key);
-    return path ? readFile(path) : null;
+    this.filesByVersion.set(archiveKey, structuredClone(parsed.files));
+    this.archivePaths.set(archiveKey, archivePath);
   }
   async getArchivePath(name: string, version: string) {
     return this.archivePaths.get(`${name}@${version}`) ?? null;
   }
+
+  private async ensureArchiveDirectory() {
+    if (!this.archiveDirectory) await this.initialize();
+    return this.archiveDirectory!;
+  }
+}
+
+async function findArchivePaths(directory: string): Promise<string[]> {
+  const results: string[] = [];
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    const path = join(directory, entry.name);
+    if (entry.isDirectory()) results.push(...(await findArchivePaths(path)));
+    else if (entry.isFile() && entry.name.endsWith(".tar.gz"))
+      results.push(path);
+  }
+  return results;
 }
 
 export function hashToken(token: string, pepper: string) {

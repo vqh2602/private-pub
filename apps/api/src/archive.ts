@@ -99,13 +99,12 @@ export async function parsePackageArchive(
     256 * 1024 * 1024,
   );
   const maxFileCount = positiveLimit("MAX_ARCHIVE_FILES", 64 * 1024);
-  const maxPreviewBytes = positiveLimit("MAX_PREVIEW_BYTES", 16 * 1024 * 1024);
+  const maxTextPreviewBytes = positiveLimit("MAX_TEXT_PREVIEW_BYTES", 512_000);
   const extract = tar.extract();
   const entries: ArchiveEntry[] = [];
   const contents = new Map<string, Buffer>();
   const seen = new Set<string>();
   let totalBytes = 0;
-  let previewBytes = 0;
   extract.on("entry", (header, stream, next) => {
     if (header.type === "directory" && [".", "./", "/"].includes(header.name)) {
       stream.on("end", next);
@@ -167,12 +166,9 @@ export async function parsePackageArchive(
       );
       return;
     }
-    const capture =
-      type === "file" &&
-      size <= 1024 * 1024 &&
-      (essential ||
-        (size <= 512_000 && previewBytes + size <= maxPreviewBytes));
-    if (capture && !essential) previewBytes += size;
+    // Only package metadata is retained while indexing. Source files stay in the
+    // tar.gz and are extracted individually when a caller requests a preview.
+    const capture = type === "file" && size <= 1024 * 1024 && essential;
     const chunks: Buffer[] = [];
     stream.on("data", (chunk: Buffer) => {
       if (capture) chunks.push(chunk);
@@ -269,10 +265,11 @@ export async function parsePackageArchive(
   const files = entries
     .filter((entry) => entry.path)
     .map<PackageFile>((entry) => {
-      const content = contents.get(entry.path);
       const language = languageFor(entry.path);
       const isText =
-        Boolean(content) && language !== "image" && content!.length <= 512_000;
+        entry.type === "file" &&
+        language !== "image" &&
+        entry.size <= maxTextPreviewBytes;
       return {
         path:
           entry.type === "directory" && !entry.path.endsWith("/")
@@ -293,7 +290,6 @@ export async function parsePackageArchive(
                   : isText
                     ? "code"
                     : "unsupported",
-        content: isText ? content!.toString("utf8") : undefined,
       };
     });
   return {
@@ -315,6 +311,56 @@ export async function parsePackageArchive(
     files,
     dependencies,
   };
+}
+
+/**
+ * Reads one bounded text entry from an archive without loading the archive (or
+ * unrelated entries) into memory. Returns undefined for a missing/non-file
+ * entry or for an entry larger than the configured preview limit.
+ */
+export async function readArchiveTextFile(
+  archivePath: string,
+  requestedPath: string,
+  maxBytes = positiveLimit("MAX_TEXT_PREVIEW_BYTES", 512_000),
+): Promise<string | undefined> {
+  const target = normalizeArchivePath(requestedPath);
+  if (!target) return undefined;
+  if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0)
+    throw new Error("Archive text preview limit must be a positive integer.");
+
+  const extract = tar.extract();
+  let content: Buffer | undefined;
+  extract.on("entry", (header, stream, next) => {
+    const path = normalizeArchivePath(header.name);
+    const size = header.size ?? 0;
+    const capture =
+      header.type === "file" &&
+      path === target &&
+      Number.isSafeInteger(size) &&
+      size >= 0 &&
+      size <= maxBytes;
+    const chunks: Buffer[] = [];
+    let capturedBytes = 0;
+    stream.on("data", (chunk: Buffer) => {
+      if (!capture) return;
+      capturedBytes += chunk.length;
+      if (capturedBytes <= maxBytes) chunks.push(chunk);
+    });
+    stream.on("end", () => {
+      if (capture && capturedBytes <= maxBytes)
+        content = Buffer.concat(chunks, capturedBytes);
+      next();
+    });
+    stream.resume();
+  });
+
+  try {
+    await pipeline(createReadStream(archivePath), createGunzip(), extract);
+  } catch (error) {
+    if (isFileSystemError(error)) throw error;
+    throw new InvalidArchiveError("The package archive is not a valid tar.gz.");
+  }
+  return content?.toString("utf8");
 }
 
 function positiveLimit(name: string, fallback: number) {

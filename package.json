@@ -12,6 +12,7 @@
     "format": "prettier --write .",
     "db:generate": "pnpm --filter @private-pub/database db:generate",
     "db:migrate": "pnpm --filter @private-pub/database db:migrate",
+    "db:deploy": "pnpm --filter @private-pub/database db:deploy",
     "db:seed": "pnpm --filter @private-pub/database db:seed",
     "fixtures:create": "node scripts/create-fixtures.mjs"
   },

@@ -1,3 +1,10 @@
+x-app-image: &app-image
+  image: private-pub-registry:local
+  build:
+    context: .
+    args:
+      NEXT_PUBLIC_API_URL: http://localhost:4000
+
 services:
   postgres:
     image: postgres:17-alpine
@@ -8,50 +15,90 @@ services:
     ports: ["127.0.0.1:5432:5432"]
     volumes: [postgres-data:/var/lib/postgresql/data]
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U private_pub"]
+      test: ["CMD-SHELL", "pg_isready -U private_pub -d private_pub"]
       interval: 5s
       timeout: 3s
-      retries: 10
+      retries: 20
+    restart: unless-stopped
 
   redis:
     image: valkey/valkey:8-alpine
     ports: ["127.0.0.1:6379:6379"]
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
 
   api:
-    image: node:22-alpine
-    working_dir: /workspace
-    command: sh -c "corepack enable && pnpm install --frozen-lockfile && pnpm --filter @private-pub/api dev"
+    <<: *app-image
+    command: >-
+      sh -c "pnpm db:deploy && pnpm --filter @private-pub/api start"
     env_file: .env
     environment:
+      NODE_ENV: development
       DATABASE_URL: postgresql://private_pub:private_pub@postgres:5432/private_pub?schema=public
       REDIS_URL: redis://redis:6379
+      ARCHIVE_STORAGE_DIR: /data/archives
     ports: ["127.0.0.1:4000:4000"]
-    volumes: [.:/workspace]
+    volumes: [archive-data:/data/archives]
     depends_on:
       postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:4000/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    init: true
+    restart: unless-stopped
 
   worker:
-    image: node:22-alpine
-    working_dir: /workspace
-    command: sh -c "corepack enable && pnpm install --frozen-lockfile && pnpm --filter @private-pub/worker dev"
+    <<: *app-image
+    command: ["pnpm", "--filter", "@private-pub/worker", "start"]
     env_file: .env
     environment:
+      NODE_ENV: development
       API_URL: http://api:4000
       REDIS_URL: redis://redis:6379
-    volumes: [.:/workspace]
-    depends_on: [api, redis]
+    depends_on:
+      api: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    init: true
+    restart: unless-stopped
 
   web:
-    image: node:22-alpine
-    working_dir: /workspace
-    command: sh -c "corepack enable && pnpm install --frozen-lockfile && pnpm --filter @private-pub/web dev"
+    <<: *app-image
+    command: ["pnpm", "--filter", "@private-pub/web", "start"]
     env_file: .env
     environment:
+      NODE_ENV: production
       NEXT_PUBLIC_API_URL: http://localhost:4000
       INTERNAL_API_URL: http://api:4000
     ports: ["127.0.0.1:3000:3000"]
-    volumes: [.:/workspace]
-    depends_on: [api]
+    depends_on:
+      api: { condition: service_healthy }
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    init: true
+    restart: unless-stopped
 
 volumes:
   postgres-data:
+  archive-data:

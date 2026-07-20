@@ -183,6 +183,5 @@ export interface RegistryRepository {
     archive: Buffer | string,
     actor: PublishActor,
   ): Promise<PublishArchiveResult>;
-  getArchive(name: string, version: string): Promise<Buffer | null>;
-  getArchivePath?(name: string, version: string): Promise<string | null>;
+  getArchivePath(name: string, version: string): Promise<string | null>;
 }

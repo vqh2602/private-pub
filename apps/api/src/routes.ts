@@ -348,29 +348,19 @@ export async function registerRoutes(
         return reply.code(404).send({
           error: { code: "not_found", message: "Archive was not found." },
         });
-      const archivePath = await repository.getArchivePath?.(name, version);
+      const archivePath = await repository.getArchivePath(name, version);
       if (archivePath)
         return reply
-          .type("application/octet-stream")
+          .type("application/gzip")
           .header(
             "Content-Disposition",
             `attachment; filename="${safeDownloadName(name)}-${safeDownloadName(version)}.tar.gz"`,
           )
           .send(createReadStream(archivePath));
-      const archive = await repository.getArchive(name, version);
-      if (archive)
-        return reply
-          .type("application/octet-stream")
-          .header(
-            "Content-Disposition",
-            `attachment; filename="${safeDownloadName(name)}-${safeDownloadName(version)}.tar.gz"`,
-          )
-          .send(archive);
-      return reply.code(501).send({
+      return reply.code(404).send({
         error: {
-          code: "archive_adapter_required",
-          message:
-            "Configure S3ArchiveStore for binary archives. Metadata and publish flow are available in demo mode.",
+          code: "archive_missing",
+          message: "The archive file is missing from disk storage.",
         },
       });
     },

@@ -1,0 +1,13 @@
+.git
+.env
+.env.*
+!.env.example
+.next
+dist
+node_modules
+.turbo
+.private-pub-data
+coverage
+*.log
+*.tsbuildinfo
+.DS_Store
