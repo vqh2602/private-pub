@@ -7,6 +7,7 @@ dist
 node_modules
 .turbo
 .private-pub-data
+.private_pub
 coverage
 *.log
 *.tsbuildinfo

@@ -1,8 +1,9 @@
 # private_pub_cli
 
-`private_pub_cli` inspects, compares, and upgrades Dart or Flutter dependencies
-against a private Hosted Pub Repository. It works with registries that implement
-the Hosted Pub Repository API V2, including Unpub and Constellation.
+`private_pub_cli` logs in, configures, publishes, searches, compares, and
+upgrades Dart or Flutter packages against this private Hosted Pub Repository.
+It includes source-preserving smart publish, topological monorepo publishing,
+and an MCP stdio server for AI tools.
 
 The `outdated` and `upgrade` commands delegate dependency resolution to the
 installed Dart or Flutter SDK. They deliberately do **not** forward a global
@@ -24,7 +25,27 @@ During local development:
 dart pub global activate --source path .
 ```
 
-## Configure
+## Login and configure
+
+Use browser-based OAuth Authorization Code + PKCE. Login also registers the
+token with the Dart SDK by default:
+
+```bash
+private_pub login https://pub.company.dev
+private_pub setup # re-register after installing a new Dart SDK
+private_pub logout https://pub.company.dev
+```
+
+Credentials are stored separately from Dart Pub so the CLI can select among
+registries and power MCP. On macOS/Linux the default file is
+`~/.config/private_pub/credentials.json` with mode `0600`. For CI, keep the
+secret in an environment variable:
+
+```bash
+private_pub --host https://pub.company.dev setup --env-var PRIVATE_PUB_TOKEN
+```
+
+## Registry selection
 
 Pass `--host` before private metadata commands (`check`, `versions`, and
 `compare`). This affects only `private_pub`, not `dart pub` or `flutter pub`
@@ -50,12 +71,6 @@ dependencies:
   http: ^1.0.0 # resolved from pub.dev
 ```
 
-For a registry protected by a Dart Pub token, configure the SDK once:
-
-```bash
-dart pub token add https://pub.company.dev
-```
-
 Direct metadata commands (`check`, `versions`, and `compare`) can use a bearer
 token without putting the secret in shell history:
 
@@ -69,6 +84,55 @@ The CLI refuses to send bearer tokens over plain HTTP except to loopback hosts;
 use HTTPS for every shared or remote registry.
 
 ## Commands
+
+### Smart publish
+
+`publish` writes `publish_to` only into a clean temporary copy and delegates
+validation/upload to the installed Dart SDK. The source `pubspec.yaml` is never
+changed:
+
+```bash
+private_pub -C packages/company_ui publish
+private_pub -C packages/company_ui publish --dry-run
+private_pub -C packages/company_ui publish --force
+```
+
+For monorepos, `--auto` discovers packages, builds the dependency graph,
+selects the transitive closure of optional target packages, converts local
+path/workspace dependencies to hosted constraints, and publishes dependencies
+first. Cycles and path dependencies outside the workspace fail before upload:
+
+```bash
+private_pub -C . publish --auto
+private_pub -C . publish --auto app_package shared_package
+private_pub -C . publish --auto --dry-run
+private_pub -C . prepare --output /tmp/publish-ready
+```
+
+`prepare` materializes publish-ready copies for inspection or another CI stage;
+it does not edit the checkout. Its default output is `.private_pub/prepare`.
+For `publish --auto`, `--dry-run` prints and validates the dependency/rewrite
+plan without invoking Dart Pub; single-package `publish --dry-run` runs Dart's
+full publish validation.
+
+### MCP for AI tools
+
+After login, expose authenticated search, package metadata, file listing, and
+source reading over MCP stdio:
+
+```json
+{
+  "mcpServers": {
+    "private-pub": {
+      "command": "private_pub",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+Pass global `--host https://pub.company.dev` before `mcp` to pin a non-default
+login. Protocol JSON is emitted only on stdout; diagnostics go to stderr.
 
 ### Check a project
 

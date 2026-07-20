@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { MultipartFile } from "@fastify/multipart";
-import { randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { createReadStream, createWriteStream } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -20,10 +20,14 @@ import {
   hashSecret,
   issueToken,
   newSession,
+  authenticateRequest,
+  allScopes,
   optionalAuthentication,
   requireScopes,
   repositoryActor,
+  scopesForRole,
   sessionCookieName,
+  type Scope,
 } from "./security.js";
 import { hashPassword, verifyPassword } from "./password.js";
 import { InvalidArchiveError } from "./archive.js";
@@ -47,6 +51,36 @@ const passwordSchema = z.object({
   currentPassword: z.string().min(1).max(256),
   newPassword: z.string().min(10).max(256),
 });
+const oauthAuthorizeSchema = z.object({
+  response_type: z.literal("code"),
+  client_id: z.literal("private_pub_cli"),
+  redirect_uri: z.string().url().max(2048),
+  code_challenge: z.string().regex(/^[A-Za-z0-9_-]{43,128}$/),
+  code_challenge_method: z.literal("S256"),
+  state: z.string().min(8).max(256),
+  scope: z.string().max(512).default("packages:read packages:publish"),
+});
+const oauthLoginSchema = oauthAuthorizeSchema.extend({
+  username: z.string().trim().min(1).max(80),
+  password: z.string().min(1).max(256),
+});
+const oauthTokenSchema = z.object({
+  grant_type: z.literal("authorization_code"),
+  client_id: z.literal("private_pub_cli"),
+  code: z.string().min(16).max(256),
+  redirect_uri: z.string().url().max(2048),
+  code_verifier: z.string().regex(/^[A-Za-z0-9._~-]{43,128}$/),
+});
+
+interface PendingOAuthCode {
+  subjectId: string;
+  username?: string;
+  role?: "super_admin" | "admin" | "user";
+  scopes: Scope[];
+  redirectUri: string;
+  codeChallenge: string;
+  expiresAt: number;
+}
 
 function sessionCookieOptions(expiresAt?: string) {
   return {
@@ -73,6 +107,7 @@ export async function registerRoutes(
   app: FastifyInstance,
   repository: RegistryRepository,
 ) {
+  const oauthCodes = new Map<string, PendingOAuthCode>();
   const pendingUploads = new Map<
     string,
     {
@@ -114,6 +149,7 @@ export async function registerRoutes(
       ),
     );
     pendingUploads.clear();
+    oauthCodes.clear();
   });
   const scopes = (...required: Parameters<typeof requireScopes>[1][]) =>
     requireScopes(repository, ...required);
@@ -176,6 +212,165 @@ export async function registerRoutes(
         });
     },
   );
+
+  const oauthScopes = (raw: string) => {
+    const values = [...new Set(raw.split(/\s+/).filter(Boolean))];
+    if (
+      !values.length ||
+      !values.every((value) => allScopes.includes(value as Scope))
+    ) {
+      const error = new Error(
+        "OAuth request contains an unsupported scope.",
+      ) as Error & {
+        statusCode?: number;
+      };
+      error.statusCode = 400;
+      throw error;
+    }
+    return values as Scope[];
+  };
+  const oauthInput = (raw: unknown) => {
+    const input = oauthAuthorizeSchema.parse(raw);
+    validateLoopbackRedirect(input.redirect_uri);
+    return { ...input, scopes: oauthScopes(input.scope) };
+  };
+  const authorize = (
+    input: ReturnType<typeof oauthInput>,
+    actor: {
+      id: string;
+      username?: string;
+      role?: "super_admin" | "admin" | "user";
+      scopes: Scope[];
+      mustChangePassword?: boolean;
+    },
+  ) => {
+    if (
+      actor.mustChangePassword &&
+      input.scopes.some((scope) => scope !== "packages:read")
+    ) {
+      const error = new Error(
+        "Change the default password before authorizing CLI publishing.",
+      ) as Error & {
+        statusCode?: number;
+      };
+      error.statusCode = 403;
+      throw error;
+    }
+    if (!input.scopes.every((scope) => actor.scopes.includes(scope))) {
+      const error = new Error(
+        "The account cannot grant all requested OAuth scopes.",
+      ) as Error & {
+        statusCode?: number;
+      };
+      error.statusCode = 403;
+      throw error;
+    }
+    for (const [code, pending] of oauthCodes) {
+      if (pending.expiresAt <= Date.now()) oauthCodes.delete(code);
+    }
+    const code = randomBytes(32).toString("base64url");
+    oauthCodes.set(code, {
+      subjectId: actor.id,
+      username: actor.username,
+      role: actor.role,
+      scopes: input.scopes,
+      redirectUri: input.redirect_uri,
+      codeChallenge: input.code_challenge,
+      expiresAt: Date.now() + 5 * 60_000,
+    });
+    const redirect = new URL(input.redirect_uri);
+    redirect.searchParams.set("code", code);
+    redirect.searchParams.set("state", input.state);
+    return redirect.toString();
+  };
+
+  app.get("/oauth/authorize", async (request, reply) => {
+    const input = oauthInput(request.query);
+    const actor = await authenticateRequest(repository, request);
+    if (actor && actor.authType !== "token") {
+      return reply
+        .header("cache-control", "no-store")
+        .redirect(authorize(input, actor));
+    }
+    return reply
+      .header("cache-control", "no-store")
+      .type("text/html; charset=utf-8")
+      .send(oauthLoginPage(input));
+  });
+
+  app.post(
+    "/oauth/authorize",
+    { config: { rateLimit: { max: 10, timeWindow: "1 minute" } } },
+    async (request, reply) => {
+      const credentials = oauthLoginSchema.parse(request.body);
+      const input = oauthInput(credentials);
+      const account = await repository.findAccountByUsername(
+        credentials.username,
+      );
+      const matches = await verifyPassword(
+        credentials.password,
+        account?.passwordHash ?? dummyPasswordHash,
+      );
+      if (!account?.isActive || !matches) {
+        return reply
+          .code(401)
+          .header("cache-control", "no-store")
+          .type("text/html; charset=utf-8")
+          .send(oauthLoginPage(input, "Username or password is incorrect."));
+      }
+      return reply.header("cache-control", "no-store").redirect(
+        authorize(input, {
+          id: account.id,
+          username: account.username,
+          role: account.role,
+          scopes: scopesForRole(account.role),
+          mustChangePassword: account.mustChangePassword,
+        }),
+      );
+    },
+  );
+
+  app.post("/oauth/token", async (request, reply) => {
+    const input = oauthTokenSchema.parse(request.body);
+    const pending = oauthCodes.get(input.code);
+    oauthCodes.delete(input.code);
+    if (
+      !pending ||
+      pending.expiresAt <= Date.now() ||
+      pending.redirectUri !== input.redirect_uri
+    ) {
+      return reply.code(400).send({
+        error: "invalid_grant",
+        error_description: "Authorization code is invalid or expired.",
+      });
+    }
+    const challenge = createHash("sha256")
+      .update(input.code_verifier, "ascii")
+      .digest("base64url");
+    if (challenge !== pending.codeChallenge) {
+      return reply.code(400).send({
+        error: "invalid_grant",
+        error_description: "PKCE verification failed.",
+      });
+    }
+    const issued = await issueToken(
+      repository,
+      {
+        name: "Private Pub CLI OAuth",
+        scopes: pending.scopes,
+        expiresInDays: 90,
+      },
+      pending.subjectId,
+      pending.scopes,
+    );
+    return reply.header("cache-control", "no-store").send({
+      access_token: issued.token,
+      token_type: "Bearer",
+      expires_in: 90 * 86_400,
+      scope: issued.scopes.join(" "),
+      username: pending.username,
+    });
+  });
   app.get(
     "/v1/auth/me",
     { preHandler: scopes("packages:read") },
@@ -871,6 +1066,82 @@ function positiveNumber(value: string | undefined, fallback: number) {
 
 function safeDownloadName(value: string) {
   return value.replace(/[^a-zA-Z0-9._+-]/g, "_");
+}
+
+function validateLoopbackRedirect(raw: string) {
+  const redirect = new URL(raw);
+  const loopback =
+    redirect.hostname === "127.0.0.1" ||
+    redirect.hostname === "[::1]" ||
+    redirect.hostname === "::1" ||
+    redirect.hostname === "localhost";
+  if (
+    redirect.protocol !== "http:" ||
+    !loopback ||
+    !redirect.port ||
+    redirect.pathname !== "/oauth/callback" ||
+    redirect.username ||
+    redirect.password ||
+    redirect.hash
+  ) {
+    const error = new Error(
+      "OAuth redirect_uri must be an HTTP loopback callback with an ephemeral port.",
+    ) as Error & { statusCode?: number };
+    error.statusCode = 400;
+    throw error;
+  }
+}
+
+function oauthLoginPage(
+  input: ReturnType<typeof oauthAuthorizeSchema.parse>,
+  error?: string,
+) {
+  const hidden = Object.entries({
+    response_type: input.response_type,
+    client_id: input.client_id,
+    redirect_uri: input.redirect_uri,
+    code_challenge: input.code_challenge,
+    code_challenge_method: input.code_challenge_method,
+    state: input.state,
+    scope: input.scope,
+  })
+    .map(
+      ([name, value]) =>
+        `<input type="hidden" name="${escapeHtml(name)}" value="${escapeHtml(String(value))}">`,
+    )
+    .join("\n");
+  return `<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Authorize Private Pub CLI</title>
+<body>
+  <main>
+    <h1>Authorize Private Pub CLI</h1>
+    <p>Sign in to grant: ${escapeHtml(input.scope)}</p>
+    ${error ? `<p role="alert">${escapeHtml(error)}</p>` : ""}
+    <form method="post" action="/oauth/authorize">
+      ${hidden}
+      <label>Username <input name="username" autocomplete="username" required></label>
+      <label>Password <input name="password" type="password" autocomplete="current-password" required></label>
+      <button type="submit">Authorize CLI</button>
+    </form>
+  </main>
+</body>
+</html>`;
+}
+
+function escapeHtml(value: string) {
+  return value.replace(/[&<>"']/g, (character) => {
+    const entities: Record<string, string> = {
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      '"': "&quot;",
+      "'": "&#39;",
+    };
+    return entities[character]!;
+  });
 }
 
 function publishFailure(error: unknown): {

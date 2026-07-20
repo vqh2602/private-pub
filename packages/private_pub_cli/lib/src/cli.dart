@@ -6,9 +6,14 @@ import 'package:args/command_runner.dart' show UsageException;
 import 'package:path/path.dart' as p;
 import 'package:pub_semver/pub_semver.dart';
 
+import 'credentials.dart';
 import 'dependency_inspector.dart';
+import 'mcp_server.dart';
 import 'models.dart';
+import 'oauth_login.dart';
+import 'pub_token.dart';
 import 'registry_client.dart';
+import 'workspace.dart';
 
 typedef Environment = Map<String, String>;
 
@@ -18,10 +23,15 @@ final class PrivatePubCli {
     IOSink? stderr,
     Environment? environment,
     String? workingDirectory,
+    CredentialStore? credentialStore,
+    PubTokenRegistrar? pubTokenRegistrar,
   })  : _stdout = stdout ?? ioStdout,
         _stderr = stderr ?? ioStderr,
         _environment = environment ?? Platform.environment,
-        _workingDirectory = workingDirectory ?? Directory.current.path;
+        _workingDirectory = workingDirectory ?? Directory.current.path,
+        _credentials = credentialStore ??
+            CredentialStore(environment: environment ?? Platform.environment),
+        _pubTokens = pubTokenRegistrar ?? const PubTokenRegistrar();
 
   static final IOSink ioStdout = stdout;
   static final IOSink ioStderr = stderr;
@@ -30,7 +40,10 @@ final class PrivatePubCli {
   final IOSink _stderr;
   final Environment _environment;
   final String _workingDirectory;
+  final CredentialStore _credentials;
+  final PubTokenRegistrar _pubTokens;
   final DependencyInspector _inspector = const DependencyInspector();
+  final WorkspacePlanner _workspace = const WorkspacePlanner();
 
   late final ArgParser _parser = _buildParser();
 
@@ -53,6 +66,18 @@ final class PrivatePubCli {
           return await _outdated(result, command);
         case 'upgrade':
           return await _upgrade(result, command);
+        case 'login':
+          return await _login(result, command);
+        case 'logout':
+          return _logout(result, command);
+        case 'setup':
+          return await _setup(result, command);
+        case 'publish':
+          return await _publish(result, command);
+        case 'prepare':
+          return await _prepare(result, command);
+        case 'mcp':
+          return await _mcp(result, command);
         default:
           throw UsageException('Unknown command: ${command.name}', _usage);
       }
@@ -73,6 +98,9 @@ final class PrivatePubCli {
     } on ProcessException catch (error) {
       _stderr.writeln('Error: ${error.message}');
       return 69;
+    } on FileSystemException catch (error) {
+      _stderr.writeln('Error: ${error.message}');
+      return 74;
     }
   }
 
@@ -149,7 +177,248 @@ final class PrivatePubCli {
         ..addFlag('tighten', negatable: false)
         ..addFlag('unlock-transitive', negatable: false),
     );
+    parser.addCommand(
+      'login',
+      ArgParser()
+        ..addFlag(
+          'setup',
+          defaultsTo: true,
+          help: 'Also register the OAuth token with dart pub.',
+        ),
+    );
+    parser.addCommand('logout');
+    parser.addCommand(
+      'setup',
+      ArgParser()
+        ..addOption(
+          'env-var',
+          help: 'Register an environment variable instead of a stored token.',
+          valueHelp: 'name',
+        ),
+    );
+    parser.addCommand(
+      'publish',
+      ArgParser()
+        ..addFlag('auto', negatable: false)
+        ..addFlag('dry-run', abbr: 'n', negatable: false)
+        ..addFlag('force', abbr: 'f', negatable: false)
+        ..addFlag('skip-validation', negatable: false)
+        ..addFlag('ignore-warnings', negatable: false),
+    );
+    parser.addCommand(
+      'prepare',
+      ArgParser()
+        ..addOption(
+          'output',
+          abbr: 'o',
+          help: 'Directory for generated publish-ready package copies.',
+          valueHelp: 'path',
+        )
+        ..addFlag('dry-run', abbr: 'n', negatable: false),
+    );
+    parser.addCommand('mcp');
     return parser;
+  }
+
+  Future<int> _login(ArgResults global, ArgResults command) async {
+    final host = _commandHost(global, command);
+    final client = OAuthLoginClient();
+    try {
+      _stdout.writeln('Opening a browser to authorize $host ...');
+      final result = await client.loginWithBrowser(
+        host,
+        onAuthorizationUrl: (url) {
+          _stdout.writeln('If the browser does not open, visit:');
+          _stdout.writeln(url);
+        },
+      );
+      _credentials.save(
+        host: host,
+        token: result.token,
+        username: result.username,
+      );
+      if (command['setup'] == true) {
+        await _pubTokens.registerToken(host, result.token);
+      }
+      _stdout.writeln(
+        'Logged in to $host${result.username == null ? '' : ' as ${result.username}'}.',
+      );
+      if (command['setup'] == true) {
+        _stdout.writeln('Dart Pub token storage is configured.');
+      }
+      return 0;
+    } finally {
+      client.close();
+    }
+  }
+
+  int _logout(ArgResults global, ArgResults command) {
+    final host = _commandHost(global, command, requireLogin: false);
+    if (!_credentials.remove(host)) {
+      _stdout.writeln('No stored login for $host.');
+      return 0;
+    }
+    _stdout.writeln('Removed the stored CLI login for $host.');
+    _stdout.writeln(
+      'Run `dart pub token remove $host` to also remove the Dart SDK copy.',
+    );
+    return 0;
+  }
+
+  Future<int> _setup(ArgResults global, ArgResults command) async {
+    final host = _commandHost(global, command);
+    final envVar = command['env-var'] as String?;
+    if (envVar != null) {
+      await _pubTokens.registerEnvironment(host, envVar);
+      _stdout.writeln('Dart Pub will read the token from $envVar for $host.');
+      return 0;
+    }
+    final credential = _credentials.get(host);
+    if (credential == null) {
+      throw UsageException(
+          'Not logged in to $host. Run `private_pub login $host`.', _usage);
+    }
+    await _pubTokens.registerToken(host, credential.token);
+    _stdout.writeln('Registered the stored token with Dart Pub for $host.');
+    return 0;
+  }
+
+  Future<int> _publish(ArgResults global, ArgResults command) async {
+    if (command['dry-run'] == true && command['force'] == true) {
+      throw UsageException(
+          '--dry-run cannot be combined with --force.', _usage);
+    }
+    if (command['auto'] == true &&
+        (command['skip-validation'] == true ||
+            command['ignore-warnings'] == true)) {
+      throw UsageException(
+        '--skip-validation and --ignore-warnings are only supported for single-package publish.',
+        _usage,
+      );
+    }
+    final directory = _directory(global);
+    final host = _resolveHost(global, directory);
+    await _ensurePubToken(global, host);
+    if (command['auto'] == true) {
+      final plan = _workspace.prepare(
+        directory,
+        host,
+        targets: command.rest,
+      );
+      _printPublishPlan(plan);
+      if (command['dry-run'] == true) {
+        _stdout.writeln('Dry run complete; source files were not changed.');
+        return 0;
+      }
+      final staging =
+          await Directory.systemTemp.createTemp('private_pub_auto_');
+      try {
+        for (final name in plan.order) {
+          final output = p.join(staging.path, name);
+          await materializePackage(
+            plan.packages[name]!,
+            output,
+            plan.rewrittenPubspecs[name]!,
+          );
+          _stdout
+              .writeln('Publishing $name ${plan.packages[name]!.version} ...');
+          final code = await _runPublishProcess(
+            output,
+            force: command['force'] as bool,
+          );
+          if (code != 0) return code;
+        }
+      } finally {
+        await staging.delete(recursive: true);
+      }
+      return 0;
+    }
+
+    final package = _packageAt(directory);
+    final staging =
+        await Directory.systemTemp.createTemp('private_pub_publish_');
+    try {
+      final output = p.join(staging.path, package.name);
+      await materializePackage(
+        package,
+        output,
+        rewritePublishTarget(package.pubspecSource, host),
+      );
+      _stdout.writeln(
+        'Publishing ${package.name} ${package.version} to $host from a temporary copy.',
+      );
+      return await _runPublishProcess(
+        output,
+        dryRun: command['dry-run'] as bool,
+        force: command['force'] as bool,
+        skipValidation: command['skip-validation'] as bool,
+        ignoreWarnings: command['ignore-warnings'] as bool,
+      );
+    } finally {
+      await staging.delete(recursive: true);
+    }
+  }
+
+  Future<int> _prepare(ArgResults global, ArgResults command) async {
+    final directory = _directory(global);
+    final host = _resolveHost(global, directory);
+    final plan = _workspace.prepare(
+      directory,
+      host,
+      targets: command.rest,
+    );
+    _printPublishPlan(plan);
+    if (command['dry-run'] == true) {
+      _stdout.writeln('Dry run complete; no files were written.');
+      return 0;
+    }
+    final rawOutput = command['output'] as String? ??
+        p.join(directory, '.private_pub', 'prepare');
+    final output =
+        Directory(p.normalize(p.absolute(_workingDirectory, rawOutput)));
+    if (output.existsSync()) {
+      throw FileSystemException(
+        'Prepare output already exists; choose an empty --output directory.',
+        output.path,
+      );
+    }
+    await output.create(recursive: true);
+    for (final name in plan.order) {
+      await materializePackage(
+        plan.packages[name]!,
+        p.join(output.path, name),
+        plan.rewrittenPubspecs[name]!,
+      );
+    }
+    _stdout
+        .writeln('Prepared ${plan.order.length} package(s) in ${output.path}.');
+    return 0;
+  }
+
+  Future<int> _mcp(ArgResults global, ArgResults command) async {
+    if (command.rest.isNotEmpty) {
+      throw UsageException('Usage: private_pub [--host URL] mcp', _usage);
+    }
+    final host = _commandHost(global, command);
+    final credential = _credential(global, host);
+    if (credential == null || credential.isEmpty) {
+      throw UsageException(
+        'No token is available for $host. Run `private_pub login $host` first.',
+        _usage,
+      );
+    }
+    final client = RegistryClient(host: host, token: credential);
+    _stderr.writeln('Private Pub MCP connected to $host over stdio.');
+    try {
+      await PrivatePubMcpServer(
+        client: client,
+        output: _stdout,
+        errors: _stderr,
+      ).run();
+      return 0;
+    } finally {
+      client.close();
+    }
   }
 
   Future<int> _check(ArgResults global, ArgResults command) async {
@@ -346,9 +615,108 @@ final class PrivatePubCli {
     return process.exitCode;
   }
 
-  RegistryClient _client(ArgResults global, Uri host) {
+  Uri _commandHost(
+    ArgResults global,
+    ArgResults command, {
+    bool requireLogin = true,
+  }) {
+    if (command.rest.length > 1) {
+      throw UsageException('Expected at most one registry URL.', _usage);
+    }
+    final positional = command.rest.singleOrNull;
+    final configured =
+        global['host'] as String? ?? _environment['PUB_HOSTED_URL'];
+    final raw = positional ?? configured;
+    if (raw != null && raw.trim().isNotEmpty) return _parseHost(raw);
+    final defaultHost = _credentials.defaultHost;
+    if (defaultHost != null) return defaultHost;
+    throw UsageException(
+      requireLogin
+          ? 'Registry URL is required. Example: private_pub login https://pub.company.dev'
+          : 'Registry URL is required.',
+      _usage,
+    );
+  }
+
+  String? _credential(ArgResults global, Uri host) {
     final tokenEnv = global['token-env'] as String;
-    return RegistryClient(host: host, token: _environment[tokenEnv]);
+    final environmentToken = _environment[tokenEnv];
+    if (environmentToken != null && environmentToken.isNotEmpty) {
+      return environmentToken;
+    }
+    return _credentials.get(host)?.token;
+  }
+
+  Future<void> _ensurePubToken(ArgResults global, Uri host) async {
+    final tokenEnv = global['token-env'] as String;
+    final environmentToken = _environment[tokenEnv];
+    if (environmentToken != null && environmentToken.isNotEmpty) {
+      await _pubTokens.registerEnvironment(host, tokenEnv);
+      return;
+    }
+    final credential = _credentials.get(host);
+    if (credential == null) {
+      throw UsageException(
+        'No token is available for $host. Run `private_pub login $host` first.',
+        _usage,
+      );
+    }
+    await _pubTokens.registerToken(host, credential.token);
+  }
+
+  WorkspacePackage _packageAt(String directory) {
+    final normalized = p.normalize(p.absolute(directory));
+    final packages = _workspace.discover(normalized);
+    for (final package in packages.values) {
+      if (p.equals(package.directory, normalized)) return package;
+    }
+    throw ProjectException('No publishable pubspec.yaml found in $normalized.');
+  }
+
+  Future<int> _runPublishProcess(
+    String directory, {
+    bool dryRun = false,
+    bool force = false,
+    bool skipValidation = false,
+    bool ignoreWarnings = false,
+  }) async {
+    final arguments = <String>[
+      'pub',
+      'publish',
+      '--directory',
+      directory,
+      if (dryRun) '--dry-run',
+      if (force) '--force',
+      if (skipValidation) '--skip-validation',
+      if (ignoreWarnings) '--ignore-warnings',
+    ];
+    _stderr.writeln('Running: dart pub publish (temporary package copy)');
+    final environment = Map<String, String>.from(_environment)
+      ..remove('PUB_HOSTED_URL');
+    final process = await Process.start(
+      'dart',
+      arguments,
+      workingDirectory: directory,
+      environment: environment,
+      mode: ProcessStartMode.inheritStdio,
+      runInShell: Platform.isWindows,
+    );
+    return process.exitCode;
+  }
+
+  void _printPublishPlan(WorkspacePlan plan) {
+    _stdout.writeln('Registry: ${plan.host}');
+    _stdout.writeln('Publish order (dependencies first):');
+    for (var index = 0; index < plan.order.length; index++) {
+      final name = plan.order[index];
+      _stdout.writeln(
+        '  ${index + 1}. $name ${plan.packages[name]!.version}',
+      );
+    }
+  }
+
+  RegistryClient _client(ArgResults global, Uri host) {
+    return RegistryClient(host: host, token: _credential(global, host));
   }
 
   String _directory(ArgResults result) {
@@ -361,10 +729,14 @@ final class PrivatePubCli {
     if (raw != null && raw.trim().isNotEmpty) {
       return _parseHost(raw);
     }
-    final urls = _inspector.hostedUrls(directory);
-    if (urls.length == 1) return urls.single;
+    if (File(p.join(directory, 'pubspec.yaml')).existsSync()) {
+      final urls = _inspector.hostedUrls(directory);
+      if (urls.length == 1) return normalizeRegistryHost(urls.single);
+    }
+    final defaultHost = _credentials.defaultHost;
+    if (defaultHost != null) return defaultHost;
     throw UsageException(
-      'Private registry is required. Use --host or set PUB_HOSTED_URL.',
+      'Private registry is required. Use --host or run `private_pub login`.',
       _usage,
     );
   }
@@ -380,7 +752,7 @@ final class PrivatePubCli {
     if (uri == null || !uri.hasScheme || uri.host.isEmpty) {
       throw FormatException('Invalid private registry URL: $raw');
     }
-    return uri;
+    return normalizeRegistryHost(uri);
   }
 
   bool _sameHost(Uri first, Uri second) =>
@@ -503,6 +875,13 @@ Global options:
 ${_parser.usage}
 
 Commands:
+  login [url]                    OAuth login in the system browser
+  logout [url]                   Remove a stored CLI login
+  setup [url]                    Register the token with the Dart SDK
+  publish                        Smart publish without editing pubspec.yaml
+  publish --auto [packages...]   Publish a monorepo in dependency order
+  prepare [packages...]          Generate hosted monorepo package copies
+  mcp                            Start the private package MCP stdio server
   check                         Compare project locks with registry versions
   versions <package>            List versions published in the registry
   compare <package> <from> <to> Compare SDK and dependency constraints
@@ -510,6 +889,11 @@ Commands:
   upgrade [packages...]         Run dart/flutter pub upgrade
 
 Examples:
+  private_pub login https://pub.company.dev
+  private_pub publish
+  private_pub -C packages publish --auto
+  private_pub -C packages prepare --dry-run
+  private_pub mcp
   private_pub --host https://pub.company.dev check
   private_pub versions company_ui
   private_pub compare company_ui 1.2.0 2.0.0

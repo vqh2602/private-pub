@@ -6,6 +6,7 @@ import swagger from "@fastify/swagger";
 import swaggerUi from "@fastify/swagger-ui";
 import multipart from "@fastify/multipart";
 import cookie from "@fastify/cookie";
+import formbody from "@fastify/formbody";
 import { ZodError } from "zod";
 import { DemoRegistryRepository } from "./repository.js";
 import { PrismaRegistryRepository } from "./prisma-repository.js";
@@ -40,12 +41,14 @@ export async function buildApp() {
   app.addHook("onRequest", async (request, reply) => {
     if (["GET", "HEAD", "OPTIONS"].includes(request.method)) return;
     const origin = request.headers.origin;
-    if (origin && !allowedOrigins.includes(origin))
+    const requestOrigin = `${request.protocol}://${request.host}`;
+    if (origin && origin !== requestOrigin && !allowedOrigins.includes(origin))
       return reply.code(403).send({ error: "origin_rejected" });
   });
   await app.register(helmet, { contentSecurityPolicy: false });
   await app.register(rateLimit, { max: 120, timeWindow: "1 minute" });
   await app.register(cookie);
+  await app.register(formbody);
   await app.register(multipart, {
     limits: { files: 1, fileSize: maxArchiveBytes, fields: 20 },
   });

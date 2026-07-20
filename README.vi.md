@@ -18,6 +18,8 @@ Repository có thể chạy ở chế độ demo với dữ liệu xác định.
 - Pipeline worker có thể cấu hình với các bước lệnh `pana`, `dart analyze`, `flutter analyze` và `dartdoc`, kèm chế độ mock không cần SDK.
 - Prisma schema bao phủ package, phiên bản, tệp, dependency, phân tích, điểm số, publisher, quyền, token, nhập package, tài liệu tìm kiếm và audit log.
 - Kiểm thử unit/contract và fixture package an toàn/lỗi định dạng.
+- CLI đầy đủ cho OAuth PKCE, tự cấu hình Dart token, smart publish không sửa
+  `pubspec.yaml`, chuẩn bị/publish monorepo theo thứ tự topo và MCP stdio cho AI.
 
 ## Sơ đồ repository
 
@@ -221,13 +223,47 @@ private_pub --host http://localhost:4000 upgrade --major-versions --dry-run
 CLI tự chọn `flutter pub` cho Flutter project và `dart pub` cho Dart project.
 Xem hướng dẫn đầy đủ trong `packages/private_pub_cli/README.md`.
 
-Đăng nhập Web, tạo PAT ở trang Tokens và copy giá trị đầy đủ ngay khi nó xuất hiện. Khi tạo token, có thể bật **Không hết hạn**; token đó chỉ mất hiệu lực khi bị thu hồi, tài khoản bị khóa/xóa, hoặc token pepper bị thay đổi. Sau đó thêm token vào Dart:
+Đăng nhập OAuth trực tiếp từ terminal. CLI mở browser, dùng Authorization Code
+với PKCE, lưu token quyền tối thiểu trong file cấu hình mode `0600`, rồi đăng ký
+token với Dart SDK:
 
 ```bash
-dart pub token add http://localhost:4000
-# Khi hiện "Enter secret token:", dán token pp_... rồi nhấn Enter.
-# Không nhập pp_... trực tiếp tại dấu nhắc zsh.
+private_pub login http://localhost:4000
+
+# Đăng ký lại sau khi cài Dart SDK mới:
+private_pub setup
 ```
+
+Smart publish tự chọn registry đã đăng nhập và tạo một package copy tạm có
+`publish_to`; `pubspec.yaml` trong checkout không bị thay đổi:
+
+```bash
+private_pub -C path/to/package publish
+private_pub -C path/to/package publish --dry-run
+
+# Monorepo: đổi path/workspace dependency thành hosted reference và publish
+# dependency trước dependent.
+private_pub -C path/to/monorepo publish --auto
+private_pub -C path/to/monorepo publish --auto app_package shared_package
+private_pub -C path/to/monorepo prepare --output /tmp/publish-ready
+```
+
+MCP server dùng cùng credential và cung cấp tool tìm package, đọc metadata,
+liệt kê file và đọc source file cho Cursor/Cline/Claude Desktop:
+
+```json
+{
+  "mcpServers": {
+    "private-pub": {
+      "command": "private_pub",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+PAT thủ công ở trang Tokens vẫn được giữ cho CI; đăng ký secret CI bằng
+`private_pub --host https://pub.company.dev setup --env-var PRIVATE_PUB_TOKEN`.
 
 Dùng khai báo repository trong `pubspec.yaml`:
 
@@ -267,6 +303,9 @@ POST   /v1/auth/login
 GET    /v1/auth/me
 POST   /v1/auth/logout
 PATCH  /v1/auth/password
+GET    /oauth/authorize
+POST   /oauth/authorize
+POST   /oauth/token
 GET    /v1/admin/accounts
 POST   /v1/admin/accounts
 GET    /v1/search

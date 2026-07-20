@@ -38,6 +38,12 @@ final class RegistryClient {
   final http.Client _httpClient;
   final bool _ownsClient;
 
+  Map<String, String> get _headers => {
+        'Accept': 'application/json',
+        if (token != null && token!.isNotEmpty)
+          'Authorization': 'Bearer $token',
+      };
+
   static Uri _normalizeHost(Uri host) {
     if (host.scheme != 'http' && host.scheme != 'https') {
       throw const RegistryException('Registry URL must use http or https.');
@@ -108,6 +114,81 @@ final class RegistryClient {
       throw RegistryException(
         'Invalid Hosted Pub metadata for "$packageName": $error',
       );
+    }
+  }
+
+  Future<Map<String, Object?>> search(
+    String query, {
+    int limit = 10,
+  }) =>
+      _getJson('/v1/search', query: {
+        'q': query,
+        'limit': '$limit',
+        'page': '1',
+      });
+
+  Future<Map<String, Object?>> getPackageDetail(String packageName) =>
+      _getJson('/v1/packages/${Uri.encodeComponent(packageName)}');
+
+  Future<Map<String, Object?>> getPackageFiles(
+    String packageName,
+    String version,
+  ) =>
+      _getJson(
+        '/v1/packages/${Uri.encodeComponent(packageName)}'
+        '/versions/${Uri.encodeComponent(version)}/files',
+      );
+
+  Future<Map<String, Object?>> getPackageFile(
+    String packageName,
+    String version,
+    String path,
+  ) {
+    final encodedPath = path
+        .split('/')
+        .where((part) => part.isNotEmpty)
+        .map(Uri.encodeComponent)
+        .join('/');
+    if (encodedPath.isEmpty || path.split('/').contains('..')) {
+      throw const RegistryException('Package file path is invalid.');
+    }
+    return _getJson(
+      '/v1/packages/${Uri.encodeComponent(packageName)}'
+      '/versions/${Uri.encodeComponent(version)}/files/$encodedPath',
+    );
+  }
+
+  Future<Map<String, Object?>> _getJson(
+    String path, {
+    Map<String, String>? query,
+  }) async {
+    final basePath = host.path.isEmpty ? '' : host.path;
+    final uri = host.replace(
+      path: '$basePath$path',
+      queryParameters: query,
+      fragment: null,
+    );
+    late final http.Response response;
+    try {
+      response = await _httpClient
+          .get(uri, headers: _headers)
+          .timeout(const Duration(seconds: 30));
+    } on http.ClientException catch (error) {
+      throw RegistryException('Cannot connect to $host: ${error.message}');
+    } on TimeoutException {
+      throw RegistryException('Registry request to $host timed out.');
+    }
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw RegistryException(
+        'Registry returned HTTP ${response.statusCode} for $path.',
+      );
+    }
+    try {
+      final value = jsonDecode(response.body);
+      if (value is! Map) throw const FormatException('Expected an object.');
+      return Map<String, Object?>.from(value);
+    } on Object catch (error) {
+      throw RegistryException('Invalid registry response for $path: $error');
     }
   }
 

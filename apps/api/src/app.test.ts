@@ -16,6 +16,7 @@ import { DemoRegistryRepository, hashToken } from "./repository.js";
 import { hashPassword, verifyPassword } from "./password.js";
 import { issueToken } from "./security.js";
 import { gunzipSync, gzipSync } from "node:zlib";
+import { createHash } from "node:crypto";
 
 function multipartArchive(archive: Buffer, filename = "package.tar.gz") {
   const boundary = `----private-pub-${Math.random().toString(16).slice(2)}`;
@@ -65,6 +66,82 @@ describe("registry API", () => {
     expect(response.json().latest.pubspec.dependencies.flutter).toEqual({
       sdk: "flutter",
     });
+  });
+  it("completes the CLI OAuth authorization-code flow with PKCE", async () => {
+    const verifier =
+      "private-pub-cli-verifier-abcdefghijklmnopqrstuvwxyz-0123456789";
+    const challenge = createHash("sha256")
+      .update(verifier, "ascii")
+      .digest("base64url");
+    const redirectUri = "http://127.0.0.1:43123/oauth/callback";
+    const query = new URLSearchParams({
+      response_type: "code",
+      client_id: "private_pub_cli",
+      redirect_uri: redirectUri,
+      code_challenge: challenge,
+      code_challenge_method: "S256",
+      state: "oauth-state-1234",
+      scope: "packages:read packages:publish",
+    });
+    const authorization = await app.inject({
+      method: "GET",
+      url: `/oauth/authorize?${query}`,
+    });
+    expect(authorization.statusCode).toBe(302);
+    const callback = new URL(authorization.headers.location!);
+    expect(callback.origin + callback.pathname).toBe(redirectUri);
+    expect(callback.searchParams.get("state")).toBe("oauth-state-1234");
+    const code = callback.searchParams.get("code")!;
+
+    const tokenBody = new URLSearchParams({
+      grant_type: "authorization_code",
+      client_id: "private_pub_cli",
+      code,
+      redirect_uri: redirectUri,
+      code_verifier: verifier,
+    }).toString();
+    const exchanged = await app.inject({
+      method: "POST",
+      url: "/oauth/token",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      payload: tokenBody,
+    });
+    expect(exchanged.statusCode).toBe(200);
+    expect(exchanged.json().access_token).toMatch(/^pp_/);
+    expect(exchanged.json().username).toBe("admin");
+
+    const profile = await app.inject({
+      method: "GET",
+      url: "/v1/auth/me",
+      headers: { authorization: `Bearer ${exchanged.json().access_token}` },
+    });
+    expect(profile.statusCode).toBe(200);
+    expect(profile.json().user.id).toBe("demo-admin");
+
+    const replay = await app.inject({
+      method: "POST",
+      url: "/oauth/token",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      payload: tokenBody,
+    });
+    expect(replay.statusCode).toBe(400);
+    expect(replay.json().error).toBe("invalid_grant");
+  });
+  it("rejects non-loopback OAuth redirect URIs", async () => {
+    const query = new URLSearchParams({
+      response_type: "code",
+      client_id: "private_pub_cli",
+      redirect_uri: "https://attacker.example/oauth/callback",
+      code_challenge: "a".repeat(43),
+      code_challenge_method: "S256",
+      state: "oauth-state-1234",
+      scope: "packages:read",
+    });
+    const response = await app.inject({
+      method: "GET",
+      url: `/oauth/authorize?${query}`,
+    });
+    expect(response.statusCode).toBe(400);
   });
   it("ranks exact names first", async () => {
     const response = await app.inject({
