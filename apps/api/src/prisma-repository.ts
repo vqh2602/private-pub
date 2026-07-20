@@ -11,7 +11,7 @@ import {
   type PackageFile as DatabaseFile,
   type PackageVersion as DatabaseVersion,
   type Score as DatabaseScore,
-} from "@prisma/client";
+} from "@private-pub/database";
 import type {
   PackageDetail,
   PackageFile,

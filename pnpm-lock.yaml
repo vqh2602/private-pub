@@ -53,6 +53,9 @@ importers:
       '@private-pub/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@private-pub/database':
+        specifier: workspace:*
+        version: link:../../packages/database
       fastify:
         specifier: ^5.4.0
         version: 5.10.0
@@ -171,11 +174,11 @@ importers:
   packages/database:
     dependencies:
       '@prisma/client':
-        specifier: ^6.10.1
+        specifier: ^6.19.3
         version: 6.19.3(prisma@6.19.3(typescript@5.9.3))(typescript@5.9.3)
     devDependencies:
       prisma:
-        specifier: ^6.10.1
+        specifier: ^6.19.3
         version: 6.19.3(typescript@5.9.3)
       tsx:
         specifier: ^4.20.3

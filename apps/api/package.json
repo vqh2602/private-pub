@@ -22,6 +22,7 @@
     "@fastify/swagger-ui": "^5.2.3",
     "@prisma/client": "^6.19.3",
     "@private-pub/contracts": "workspace:*",
+    "@private-pub/database": "workspace:*",
     "fastify": "^5.4.0",
     "fastify-plugin": "^5.0.1",
     "semver": "^7.7.2",
