@@ -6,16 +6,24 @@ import 'package:pub_semver/pub_semver.dart';
 
 import 'models.dart';
 
+/// Exception thrown when registry operations or network requests fail.
 final class RegistryException implements Exception {
+  /// Creates a new [RegistryException] with the given [message].
   const RegistryException(this.message);
 
+  /// The error message.
   final String message;
 
   @override
   String toString() => message;
 }
 
+/// A client to interact with the private Hosted Pub registry.
 final class RegistryClient {
+  /// Creates a new [RegistryClient] instance.
+  ///
+  /// Requires a [host] URI. Optionally takes an authentication [token] and
+  /// a custom [httpClient].
   RegistryClient({
     required Uri host,
     this.token,
@@ -33,7 +41,10 @@ final class RegistryClient {
     }
   }
 
+  /// The normalized URI of the registry host.
   final Uri host;
+
+  /// The authentication token, if any.
   final String? token;
   final http.Client _httpClient;
   final bool _ownsClient;
@@ -60,6 +71,7 @@ final class RegistryClient {
     );
   }
 
+  /// Fetches package metadata from the registry.
   Future<RegistryPackage> getPackage(String packageName) async {
     final basePath = host.path.isEmpty ? '' : host.path;
     final uri = host.replace(
@@ -117,6 +129,7 @@ final class RegistryClient {
     }
   }
 
+  /// Searches the registry using the given [query] and [limit].
   Future<Map<String, Object?>> search(
     String query, {
     int limit = 10,
@@ -127,9 +140,11 @@ final class RegistryClient {
         'page': '1',
       });
 
+  /// Fetches details of the package from the control plane API.
   Future<Map<String, Object?>> getPackageDetail(String packageName) =>
       _getJson('/v1/packages/${Uri.encodeComponent(packageName)}');
 
+  /// Fetches files listed in a specific package version.
   Future<Map<String, Object?>> getPackageFiles(
     String packageName,
     String version,
@@ -139,6 +154,7 @@ final class RegistryClient {
         '/versions/${Uri.encodeComponent(version)}/files',
       );
 
+  /// Fetches a specific file from a package version.
   Future<Map<String, Object?>> getPackageFile(
     String packageName,
     String version,
@@ -195,6 +211,7 @@ final class RegistryClient {
   static bool _isLoopback(String host) =>
       host == 'localhost' || host == '127.0.0.1' || host == '::1';
 
+  /// Closes the HTTP client.
   void close() {
     if (_ownsClient) _httpClient.close();
   }

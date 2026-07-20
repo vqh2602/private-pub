@@ -16,13 +16,18 @@ import 'pub_token.dart';
 import 'registry_client.dart';
 import 'workspace.dart';
 
+/// Represents the environment variables map.
 typedef Environment = Map<String, String>;
+
+/// Factory function type for creating a [RegistryClient].
 typedef RegistryClientFactory = RegistryClient Function(
   Uri host,
   String? token,
 );
 
+/// The main command line interface class for Private Pub CLI.
 final class PrivatePubCli {
+  /// Creates a new [PrivatePubCli] instance.
   PrivatePubCli({
     IOSink? stdout,
     IOSink? stderr,
@@ -46,7 +51,10 @@ final class PrivatePubCli {
         _registryClientFactory = registryClientFactory ??
             ((host, token) => RegistryClient(host: host, token: token));
 
+  /// The standard output sink wrapper.
   static final IOSink ioStdout = stdout;
+
+  /// The standard error sink wrapper.
   static final IOSink ioStderr = stderr;
 
   final IOSink _stdout;
@@ -61,6 +69,9 @@ final class PrivatePubCli {
 
   late final ArgParser _parser = _buildParser();
 
+  /// Runs the command line application with the specified [arguments].
+  ///
+  /// Returns the exit code (0 for success).
   Future<int> run(List<String> arguments) async {
     try {
       final result = _parser.parse(arguments);

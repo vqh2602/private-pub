@@ -7,6 +7,10 @@ import 'registry_client.dart';
 /// Small MCP stdio server exposing authenticated private-registry discovery
 /// and source-reading tools. Protocol messages are the only stdout output.
 final class PrivatePubMcpServer {
+  /// Creates a new [PrivatePubMcpServer] instance.
+  ///
+  /// Requires a [client] instance. Optionally accepts custom stream/sink for
+  /// [input], [output], and [errors] (defaults to stdin, stdout, and stderr).
   PrivatePubMcpServer({
     required RegistryClient client,
     Stream<List<int>>? input,
@@ -23,6 +27,7 @@ final class PrivatePubMcpServer {
   final IOSink _errors;
   bool _exitRequested = false;
 
+  /// Runs the MCP server loop reading JSON-RPC messages from input and responding to output.
   Future<void> run() async {
     await for (final line
         in _input.transform(utf8.decoder).transform(const LineSplitter())) {

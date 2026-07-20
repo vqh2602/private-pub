@@ -3,7 +3,9 @@ import 'dart:io';
 
 import 'package:path/path.dart' as p;
 
+/// Represents a set of credentials stored for a specific registry host.
 final class StoredCredential {
+  /// Creates a new [StoredCredential] instance.
   const StoredCredential({
     required this.host,
     required this.token,
@@ -11,11 +13,19 @@ final class StoredCredential {
     required this.createdAt,
   });
 
+  /// The URI of the registry host.
   final Uri host;
+
+  /// The bearer token used for authentication.
   final String token;
+
+  /// Optional username associated with the credentials.
   final String? username;
+
+  /// The time when these credentials were created.
   final DateTime createdAt;
 
+  /// Converts the credentials to a JSON-encodable map.
   Map<String, Object?> toJson() => {
         'token': token,
         if (username != null) 'username': username,
@@ -28,6 +38,10 @@ final class StoredCredential {
 /// The CLI copy is needed for registry selection, OAuth refresh-free login,
 /// MCP access, and re-registering a token with a newly installed Dart SDK.
 final class CredentialStore {
+  /// Creates a new [CredentialStore] instance.
+  ///
+  /// Optionally accepts an [environment] map (defaults to [Platform.environment])
+  /// and an explicit [filePath] for the credentials JSON file.
   CredentialStore({
     Map<String, String>? environment,
     String? filePath,
@@ -37,6 +51,7 @@ final class CredentialStore {
   final Map<String, String> _environment;
   final String? _explicitPath;
 
+  /// Gets the file path where credentials are saved.
   String get filePath {
     if (_explicitPath != null) return _explicitPath;
     if (Platform.isWindows) {
@@ -58,11 +73,13 @@ final class CredentialStore {
     return p.join(home, '.config', 'ppub', 'credentials.json');
   }
 
+  /// Gets the default registry host URI.
   Uri? get defaultHost {
     final raw = _read()['defaultHost'];
     return raw is String ? Uri.tryParse(raw) : null;
   }
 
+  /// Lists all stored credentials.
   List<StoredCredential> list() {
     final root = _read();
     final rawServers = root['servers'];
@@ -86,6 +103,7 @@ final class CredentialStore {
     return credentials;
   }
 
+  /// Gets the stored credential for the specified [host].
   StoredCredential? get(Uri host) {
     final canonical = normalizeRegistryHost(host);
     for (final credential in list()) {
@@ -94,6 +112,7 @@ final class CredentialStore {
     return null;
   }
 
+  /// Saves the credential for the specified [host].
   void save({
     required Uri host,
     required String token,
@@ -120,6 +139,9 @@ final class CredentialStore {
     _write(root);
   }
 
+  /// Removes the stored credential for the specified [host].
+  ///
+  /// Returns `true` if the credential was removed, `false` otherwise.
   bool remove(Uri host) {
     final canonical = normalizeRegistryHost(host).toString();
     final root = _read();
@@ -138,11 +160,13 @@ final class CredentialStore {
     return true;
   }
 
+  /// Clears the credential store file.
   void clear() {
     final file = File(filePath);
     if (file.existsSync()) file.deleteSync();
   }
 
+  /// Sets the default registry host to the specified [host].
   void setDefault(Uri host) {
     final canonical = normalizeRegistryHost(host);
     final root = _read()..['defaultHost'] = canonical.toString();
@@ -182,6 +206,7 @@ final class CredentialStore {
   }
 }
 
+/// Normalizes the registry [host] URI to be schema-matching and trailing-slash free.
 Uri normalizeRegistryHost(Uri host) {
   if ((host.scheme != 'http' && host.scheme != 'https') || host.host.isEmpty) {
     throw const FormatException(

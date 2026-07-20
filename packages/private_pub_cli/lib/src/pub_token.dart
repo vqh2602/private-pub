@@ -4,11 +4,15 @@ import 'dart:io';
 import 'credentials.dart';
 import 'registry_client.dart';
 
+/// Registers access tokens with the local Dart SDK using FVM.
 final class PubTokenRegistrar {
+  /// Creates a new [PubTokenRegistrar] instance.
   const PubTokenRegistrar({this.fvmExecutable = 'fvm'});
 
+  /// The executable name/path for FVM (defaults to 'fvm').
   final String fvmExecutable;
 
+  /// Registers a [token] for the given [rawHost] with the Dart SDK.
   Future<void> registerToken(Uri rawHost, String token) async {
     final host = normalizeRegistryHost(rawHost);
     final process = await Process.start(
@@ -31,6 +35,7 @@ final class PubTokenRegistrar {
     }
   }
 
+  /// Registers an environment variable name for authentication with the given [rawHost].
   Future<void> registerEnvironment(Uri rawHost, String variableName) async {
     final host = normalizeRegistryHost(rawHost);
     if (!RegExp(r'^[A-Za-z_][A-Za-z0-9_]*$').hasMatch(variableName)) {

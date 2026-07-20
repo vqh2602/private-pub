@@ -6,18 +6,24 @@ import 'package:yaml/yaml.dart';
 
 import 'models.dart';
 
+/// Exception thrown when workspace/project dependency validation fails.
 final class ProjectException implements Exception {
+  /// Creates a new [ProjectException] instance with a [message].
   const ProjectException(this.message);
 
+  /// The error message.
   final String message;
 
   @override
   String toString() => message;
 }
 
+/// Inspects local project dependencies using `pubspec.yaml` and `pubspec.lock`.
 final class DependencyInspector {
+  /// Creates a new [DependencyInspector] instance.
   const DependencyInspector();
 
+  /// Inspects a directory to find all package dependencies.
   List<ProjectDependency> inspect(String directory) {
     final pubspecFile = File(p.join(directory, 'pubspec.yaml'));
     if (!pubspecFile.existsSync()) {
@@ -49,9 +55,11 @@ final class DependencyInspector {
     return result;
   }
 
+  /// Gets all hosted dependency registry URLs for the project.
   Set<Uri> hostedUrls(String directory) =>
       inspect(directory).map((item) => item.hostedUrl).whereType<Uri>().toSet();
 
+  /// Checks whether a project has a dependency on the Flutter SDK.
   bool isFlutterProject(String directory) {
     return inspect(directory).any(
       (item) => item.name == 'flutter' && item.constraint == 'sdk:flutter',

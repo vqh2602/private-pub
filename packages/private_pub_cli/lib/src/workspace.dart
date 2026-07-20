@@ -14,7 +14,9 @@ const _dependencyGroups = [
   'dependency_overrides',
 ];
 
+/// Represents a package within a Dart workspace/monorepo.
 final class WorkspacePackage {
+  /// Creates a new [WorkspacePackage] instance.
   const WorkspacePackage({
     required this.name,
     required this.version,
@@ -23,14 +25,25 @@ final class WorkspacePackage {
     required this.pubspec,
   });
 
+  /// The name of the package.
   final String name;
+
+  /// The version of the package.
   final Version version;
+
+  /// The absolute directory path containing the package.
   final String directory;
+
+  /// The raw string content of the package's `pubspec.yaml` file.
   final String pubspecSource;
+
+  /// The parsed YAML map of the package's `pubspec.yaml`.
   final Map<String, Object?> pubspec;
 }
 
+/// Represents the generated publishing plan for a workspace.
 final class WorkspacePlan {
+  /// Creates a new [WorkspacePlan] instance.
   const WorkspacePlan({
     required this.rootDirectory,
     required this.host,
@@ -39,18 +52,30 @@ final class WorkspacePlan {
     required this.rewrittenPubspecs,
   });
 
+  /// The root directory of the workspace.
   final String rootDirectory;
+
+  /// The registry host URI where packages will be published.
   final Uri host;
+
+  /// A map from package name to [WorkspacePackage].
   final Map<String, WorkspacePackage> packages;
+
+  /// The topologically sorted list of package names in publication order.
   final List<String> order;
+
+  /// A map from package name to its rewritten `pubspec.yaml` content.
   final Map<String, String> rewrittenPubspecs;
 }
 
 /// Discovers a Dart monorepo, builds its local dependency graph, and produces
 /// hosted pubspec variants without changing any source file.
 final class WorkspacePlanner {
+  /// Creates a new [WorkspacePlanner] instance.
   const WorkspacePlanner();
 
+  /// Prepares the publication plan for the workspace starting at [rootDirectory]
+  /// targeting the given registry [rawHost].
   WorkspacePlan prepare(
     String rootDirectory,
     Uri rawHost, {
@@ -88,6 +113,7 @@ final class WorkspacePlanner {
     );
   }
 
+  /// Discovers all Dart packages with a valid `pubspec.yaml` under [rootDirectory].
   Map<String, WorkspacePackage> discover(String rootDirectory) {
     final root = Directory(p.normalize(p.absolute(rootDirectory)));
     if (!root.existsSync()) {
@@ -247,6 +273,7 @@ Future<void> materializePackage(
   await File(p.join(output.path, 'pubspec.yaml')).writeAsString(pubspecSource);
 }
 
+/// Rewrites the `publish_to` field of a `pubspec.yaml` string with [rawHost].
 String rewritePublishTarget(String pubspecSource, Uri rawHost) {
   final editor = YamlEditor(pubspecSource);
   editor.update(['publish_to'], normalizeRegistryHost(rawHost).toString());
@@ -306,5 +333,5 @@ Map<String, Object?> _stringMap(Map value) => value.map(
       (key, value) => MapEntry(
         key.toString(),
         value is Map ? _stringMap(value) : value,
-      ),
-    );
+        ),
+      );

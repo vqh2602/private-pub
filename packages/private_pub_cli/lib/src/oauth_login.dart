@@ -9,16 +9,26 @@ import 'package:http/http.dart' as http;
 import 'credentials.dart';
 import 'registry_client.dart';
 
+/// Callback type for opening a system browser with a given URI.
 typedef BrowserOpener = Future<bool> Function(Uri uri);
 
+/// Represents the result of a successful OAuth login flow.
 final class LoginResult {
+  /// Creates a new [LoginResult] instance.
   const LoginResult({required this.token, required this.username});
 
+  /// The access token obtained from the registry.
   final String token;
+
+  /// Optional username of the authenticated user.
   final String? username;
 }
 
+/// Orchestrates the OAuth 2.0 PKCE login flow with the private registry.
 final class OAuthLoginClient {
+  /// Creates a new [OAuthLoginClient] instance.
+  ///
+  /// Optionally takes an [httpClient], a custom [browserOpener], and a [random] generator.
   OAuthLoginClient({
     http.Client? httpClient,
     BrowserOpener? browserOpener,
@@ -33,6 +43,7 @@ final class OAuthLoginClient {
   final BrowserOpener _browserOpener;
   final Random _random;
 
+  /// Starts the browser-based OAuth flow and exchanges the code for a token.
   Future<LoginResult> loginWithBrowser(
     Uri rawHost, {
     void Function(Uri authorizationUrl)? onAuthorizationUrl,
@@ -141,6 +152,7 @@ final class OAuthLoginClient {
     }
   }
 
+  /// Validates the given [token] against the registry host.
   Future<LoginResult> validateToken(Uri rawHost, String token) async {
     final host = normalizeRegistryHost(rawHost);
     _requireSecureRemote(host);
@@ -169,11 +181,13 @@ final class OAuthLoginClient {
       .encode(List<int>.generate(byteCount, (_) => _random.nextInt(256)))
       .replaceAll('=', '');
 
+  /// Closes the HTTP client if it was created internally.
   void close() {
     if (_ownsClient) _httpClient.close();
   }
 }
 
+/// Opens the specified [uri] in the system browser.
 Future<bool> openSystemBrowser(Uri uri) async {
   final executable = Platform.isMacOS
       ? 'open'
