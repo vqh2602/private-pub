@@ -1054,6 +1054,8 @@ export class PrismaRegistryRepository implements RegistryRepository {
     hasPreview: boolean,
   ): PackageSummary {
     const score = scoreFromDatabase(latest.scores[0]);
+    const pubspec = (latest.pubspecJson as Record<string, unknown>) || {};
+    const repository = typeof pubspec.repository === "string" ? pubspec.repository : null;
     return {
       name: item.name,
       publisherId: item.publisher?.publisherId ?? "local.private",
@@ -1065,12 +1067,15 @@ export class PrismaRegistryRepository implements RegistryRepository {
       downloads30d: latest.scores[0]?.downloadCount30d ?? 0,
       score: score.grantedPoints,
       hasPreview,
+      repository,
     };
   }
 
   private summaryFromSearchDocument(
     item: DatabaseSearchDocument,
   ): PackageSummary {
+    const pubspec = (item.version.pubspecJson as Record<string, unknown>) || {};
+    const repository = typeof pubspec.repository === "string" ? pubspec.repository : null;
     return {
       name: item.name,
       publisherId:
@@ -1085,6 +1090,7 @@ export class PrismaRegistryRepository implements RegistryRepository {
       downloads30d: item.downloads30d,
       score: item.score,
       hasPreview: item.hasPreview,
+      repository,
     };
   }
 

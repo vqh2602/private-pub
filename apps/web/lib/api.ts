@@ -221,6 +221,7 @@ const fallbackPackages: PackageSummary[] = [
     downloads30d: 4212,
     score: 148,
     hasPreview: true,
+    repository: "https://github.com/example/aurora-ui",
   },
   {
     name: "secure_storage_plus",
@@ -233,6 +234,7 @@ const fallbackPackages: PackageSummary[] = [
     downloads30d: 2890,
     score: 154,
     hasPreview: true,
+    repository: "https://github.com/vqh2602/lucide-flutter-main",
   },
 ];
 

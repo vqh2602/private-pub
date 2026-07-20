@@ -2,6 +2,7 @@ import type { PackageSummary } from "@private-pub/contracts";
 import { Badge } from "@private-pub/ui";
 import { ArrowUpRight, Box, CheckCircle2, Download, Eye, Star } from "lucide-react";
 import Link from "next/link";
+import { GitHubStars } from "./github-stars";
 
 export function PackageCard({ item }: { item: PackageSummary }) {
   return <article className="package-card">
@@ -12,7 +13,7 @@ export function PackageCard({ item }: { item: PackageSummary }) {
       <div className="package-meta"><span><CheckCircle2 size={14} />{item.publisherId}</span><span>Updated {formatDate(item.updatedAt)}</span>{item.topics.map((topic) => <Badge key={topic}>{topic}</Badge>)}</div>
     </div>
     <div className="package-stats">
-      <span><Star size={15} />{item.score} pts</span><span><Download size={15} />{item.downloads30d.toLocaleString()}</span>{item.hasPreview && <span><Eye size={15} />Preview</span>}
+      <span><Star size={15} /><GitHubStars repositoryUrl={item.repository} /></span><span><Download size={15} />{item.downloads30d.toLocaleString()}</span>{item.hasPreview && <span><Eye size={15} />Preview</span>}
       <Link className="arrow-link" href={`/packages/${item.name}`} aria-label={`Open ${item.name}`}><ArrowUpRight size={18} /></Link>
     </div>
   </article>;

@@ -76,6 +76,7 @@ export const packageSummarySchema = z.object({
   downloads30d: z.number(),
   score: z.number(),
   hasPreview: z.boolean(),
+  repository: z.string().nullable().optional(),
 });
 export type PackageSummary = z.infer<typeof packageSummarySchema>;
 
