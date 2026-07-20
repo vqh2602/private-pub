@@ -11,8 +11,10 @@ import {
   X,
 } from "lucide-react";
 import { FormEvent, useCallback, useEffect, useState } from "react";
+import { useLanguage } from "@/components/language-provider";
 
 export function UserManagement() {
+  const { locale } = useLanguage();
   const [users, setUsers] = useState<AccountSummary[]>([]);
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -33,13 +35,13 @@ export function UserManagement() {
     else
       setError(
         response.status === 401
-          ? "Hãy đăng nhập để quản lý người dùng."
+          ? (locale === "en" ? "Please sign in to manage users." : "Hãy đăng nhập để quản lý người dùng.")
           : response.status === 403
-            ? "Tài khoản hiện tại không có quyền quản trị người dùng."
-            : "Không thể tải danh sách người dùng.",
+            ? (locale === "en" ? "Current account does not have user administration privileges." : "Tài khoản hiện tại không có quyền quản trị người dùng.")
+            : (locale === "en" ? "Unable to load users." : "Không thể tải danh sách người dùng."),
       );
     setLoading(false);
-  }, []);
+  }, [locale]);
 
   useEffect(() => {
     void load();
@@ -60,14 +62,16 @@ export function UserManagement() {
       setError(
         payload.message ??
           (response.status === 409
-            ? "Tên đăng nhập đã tồn tại."
-            : "Không thể tạo người dùng."),
+            ? (locale === "en" ? "Username already exists." : "Tên đăng nhập đã tồn tại.")
+            : (locale === "en" ? "Unable to create user." : "Không thể tạo người dùng.")),
       );
       setLoading(false);
       return;
     }
     setSuccess(
-      `Đã tạo tài khoản ${payload.user.username}. Người dùng sẽ phải đổi mật khẩu khi đăng nhập lần đầu.`,
+      locale === "en"
+        ? `Account ${payload.user.username} created. The user will be required to change their password upon first sign-in.`
+        : `Đã tạo tài khoản ${payload.user.username}. Người dùng sẽ phải đổi mật khẩu khi đăng nhập lần đầu.`,
     );
     setUsername("");
     setPassword("");
@@ -125,12 +129,12 @@ export function UserManagement() {
               value={role}
               onChange={(event) => setRole(event.target.value as AccountRole)}
             >
-              <option value="user">Người dùng</option>
+              <option value="user">{locale === "en" ? "User" : "Người dùng"}</option>
               {currentRole === "super_admin" && (
-                <option value="admin">Quản trị viên</option>
+                <option value="admin">{locale === "en" ? "Admin" : "Quản trị viên"}</option>
               )}
               {currentRole === "super_admin" && (
-                <option value="super_admin">Quản trị viên cấp cao</option>
+                <option value="super_admin">{locale === "en" ? "Super Admin" : "Quản trị viên cấp cao"}</option>
               )}
             </select>
           </label>
@@ -164,7 +168,7 @@ export function UserManagement() {
               </span>
               <div>
                 <strong>{user.username}</strong>
-                <small>{roleLabel(user.role)}</small>
+                <small>{roleLabel(user.role, locale)}</small>
               </div>
               {user.mustChangePassword && (
                 <Badge tone="amber">Chờ đổi mật khẩu</Badge>
@@ -183,7 +187,12 @@ export function UserManagement() {
   );
 }
 
-function roleLabel(role: AccountRole) {
+function roleLabel(role: AccountRole, locale: "vi" | "en") {
+  if (locale === "en") {
+    if (role === "super_admin") return "Super Admin";
+    if (role === "admin") return "Admin";
+    return "User";
+  }
   if (role === "super_admin") return "Quản trị viên cấp cao";
   if (role === "admin") return "Quản trị viên";
   return "Người dùng";
