@@ -11,7 +11,16 @@ RUN pnpm install --frozen-lockfile
 
 ARG NEXT_PUBLIC_API_URL=http://localhost:4000
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
-RUN pnpm build
+RUN build_attempt=1; \
+  until pnpm build; do \
+    if [ "$build_attempt" -ge 3 ]; then \
+      echo "pnpm build failed after ${build_attempt} attempts." >&2; \
+      exit 1; \
+    fi; \
+    echo "pnpm build failed; retrying (${build_attempt}/3) after Prisma engine download interruption..." >&2; \
+    build_attempt=$((build_attempt + 1)); \
+    sleep 5; \
+  done
 
 FROM node:22-bookworm-slim AS runtime
 

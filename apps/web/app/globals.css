@@ -1788,6 +1788,33 @@ td svg {
 .cli-setup .code-snippet {
   margin-top: 9px;
 }
+.cli-tabs {
+  display: flex;
+  gap: 8px;
+  margin: 16px 0 12px;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 8px;
+}
+.cli-tab-btn {
+  padding: 6px 12px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+.cli-tab-btn:hover {
+  color: var(--text);
+  background: var(--line);
+}
+.cli-tab-btn.active {
+  color: var(--blue);
+  background: var(--blue-soft);
+  font-weight: 600;
+}
 .not-found {
   min-height: 65vh;
   display: grid;

@@ -57,6 +57,17 @@ export default function TokensPage() {
   const [error, setError] = useState<string | null>(null);
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
+  const [cliTab, setCliTab] = useState<"dart" | "flutter" | "fvm">("dart");
+  const [apiUrl, setApiUrl] = useState("http://localhost:4000");
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      setApiUrl(
+        process.env.NEXT_PUBLIC_API_URL ||
+          `${window.location.protocol}//${window.location.hostname}:4000`
+      );
+    }
+  }, []);
 
   const load = useCallback(async () => {
     const me = await fetch("/api/auth/me", { cache: "no-store" });
@@ -352,17 +363,66 @@ export default function TokensPage() {
           </section>
         )}
         <section className="cli-setup">
-          <span className="eyebrow">CLI quick start</span>
-          <h2>Connect FVM Dart Pub</h2>
-          <p>
-            Chạy lệnh rồi dán token khi Dart hỏi{" "}
-            <code>Enter secret token:</code>. Không chạy token như một lệnh
-            shell.
+          <span className="eyebrow">CLI configuration</span>
+          <h2>Cấu hình Dart & Flutter CLI</h2>
+          <p style={{ marginBottom: "16px" }}>
+            Chọn công cụ bạn đang sử dụng để xem hướng dẫn cấu hình chi tiết:
           </p>
-          <CopySnippet>
-            fvm dart pub token add http://localhost:4000
-          </CopySnippet>
-          <CopySnippet>fvm dart pub get</CopySnippet>
+
+          <div className="cli-tabs">
+            <button
+              type="button"
+              className={`cli-tab-btn ${cliTab === "dart" ? "active" : ""}`}
+              onClick={() => setCliTab("dart")}
+            >
+              Dart CLI
+            </button>
+            <button
+              type="button"
+              className={`cli-tab-btn ${cliTab === "flutter" ? "active" : ""}`}
+              onClick={() => setCliTab("flutter")}
+            >
+              Flutter CLI
+            </button>
+            <button
+              type="button"
+              className={`cli-tab-btn ${cliTab === "fvm" ? "active" : ""}`}
+              onClick={() => setCliTab("fvm")}
+            >
+              FVM (Flutter)
+            </button>
+          </div>
+
+          <p style={{ marginTop: "12px", fontSize: "14px", color: "var(--muted)" }}>
+            Chạy lệnh dưới đây rồi dán token truy cập khi được hỏi <code>Enter secret token:</code> (Không chạy token trực tiếp trong lệnh shell).
+          </p>
+
+          {cliTab === "dart" && (
+            <>
+              <CopySnippet>
+                {`dart pub token add ${apiUrl}`}
+              </CopySnippet>
+              <CopySnippet>dart pub get</CopySnippet>
+            </>
+          )}
+
+          {cliTab === "flutter" && (
+            <>
+              <CopySnippet>
+                {`flutter pub token add ${apiUrl}`}
+              </CopySnippet>
+              <CopySnippet>flutter pub get</CopySnippet>
+            </>
+          )}
+
+          {cliTab === "fvm" && (
+            <>
+              <CopySnippet>
+                {`fvm dart pub token add ${apiUrl}`}
+              </CopySnippet>
+              <CopySnippet>fvm dart pub get</CopySnippet>
+            </>
+          )}
         </section>
       </div>
     </main>
