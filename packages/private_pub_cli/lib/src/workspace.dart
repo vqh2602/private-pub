@@ -305,6 +305,7 @@ const _ignoredDirectories = {
   '.private_pub',
   '.club',
   '.ppub',
+  '.fvm',
   'build',
 };
 

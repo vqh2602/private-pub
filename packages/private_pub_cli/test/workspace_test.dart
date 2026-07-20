@@ -111,6 +111,9 @@ ${dependencies.isEmpty ? '' : 'dependencies:\n$dependencies'}
     Directory(p.join(temp.path, 'sample', '.dart_tool')).createSync();
     File(p.join(temp.path, 'sample', '.dart_tool', 'secret'))
         .writeAsStringSync('x');
+    Directory(p.join(temp.path, 'sample', '.fvm')).createSync();
+    File(p.join(temp.path, 'sample', '.fvm', 'secret'))
+        .writeAsStringSync('y');
     File(p.join(temp.path, 'sample', 'lib.dart'))
         .writeAsStringSync('const value = 1;');
     final package = const WorkspacePlanner().discover(temp.path)['sample']!;
@@ -127,6 +130,7 @@ ${dependencies.isEmpty ? '' : 'dependencies:\n$dependencies'}
 
     expect(File(p.join(output, 'lib.dart')).existsSync(), isTrue);
     expect(Directory(p.join(output, '.dart_tool')).existsSync(), isFalse);
+    expect(Directory(p.join(output, '.fvm')).existsSync(), isFalse);
     expect(
       loadYaml(File(p.join(output, 'pubspec.yaml')).readAsStringSync())[
           'publish_to'],
