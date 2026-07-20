@@ -789,7 +789,7 @@ export class PrismaRegistryRepository implements RegistryRepository {
     const topics = stringArray(parsed.pubspec.topics);
     const calculatedScore = scoreParsedPackage(parsed);
     await this.prisma.$transaction(async (transaction) => {
-      await transaction.$queryRaw`
+      await transaction.$executeRaw`
         SELECT pg_advisory_xact_lock(hashtext(${parsed.name}))
       `;
       const existing = await transaction.package.findUnique({
