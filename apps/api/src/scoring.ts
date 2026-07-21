@@ -1,5 +1,6 @@
 import type { Score } from "@private-pub/contracts";
 import type { ParsedDependency, ParsedPackageArchive } from "./archive.js";
+import type { AnalyzerFinding } from "./analyzer.js";
 
 export const SCORE_WEIGHTS = {
   conventions: 30,
@@ -17,9 +18,14 @@ export interface PackageScoreInput {
   files: Array<{ path: string }>;
   dependencies: ParsedDependency[];
   downloads30d?: number;
+  findings?: AnalyzerFinding[];
 }
 
-export function scoreParsedPackage(parsed: ParsedPackageArchive, downloads30d = 0): Score {
+export function scoreParsedPackage(
+  parsed: ParsedPackageArchive,
+  downloads30d = 0,
+  findings?: AnalyzerFinding[]
+): Score {
   return calculatePackageScore({
     pubspec: parsed.pubspec,
     description: parsed.description,
@@ -27,7 +33,8 @@ export function scoreParsedPackage(parsed: ParsedPackageArchive, downloads30d = 
     changelog: parsed.changelog,
     files: parsed.files,
     dependencies: parsed.dependencies,
-    downloads30d
+    downloads30d,
+    findings
   });
 }
 
@@ -88,15 +95,28 @@ export function calculatePackageScore(input: PackageScoreInput): Score {
 
   const hasAnalysisOptions = hasPath("analysis_options.yaml");
   const hasTests = hasPrefix("test/") && [...paths].some((path) => path.startsWith("test/") && path.endsWith(".dart"));
+  
+  const analyzerFindings = input.findings || [];
+  const analyzerDetails = analyzerFindings.map((f) => {
+    const penalty = f.severity === "ERROR" ? 12 : 3;
+    const location = f.file ? ` in ${f.file}:${f.line}` : "";
+    return `Analyzer ${f.severity.toLowerCase()}${location}: ${f.message} (${f.code ? `[${f.code}] ` : ""}−${penalty} points).`;
+  });
+  const analyzerDeductions = analyzerFindings.reduce((sum, f) => {
+    return sum + (f.severity === "ERROR" ? 12 : 3);
+  }, 0);
+
   const analysisDetails = compact([
     !hasPrefix("lib/") && "No lib/ directory was found for static analysis (−20 points).",
     !hasAnalysisOptions && "analysis_options.yaml is missing (−10 points).",
-    !hasTests && "No Dart tests were found under test/ (−10 points)."
+    !hasTests && "No Dart tests were found under test/ (−10 points).",
+    ...analyzerDetails
   ]);
   const analysis = clamp(
     (hasPrefix("lib/") ? 20 : 0) +
     (hasAnalysisOptions ? 10 : 0) +
-    (hasTests ? 10 : 0),
+    (hasTests ? 10 : 0) -
+    analyzerDeductions,
     SCORE_WEIGHTS.analysis
   );
 

@@ -52,6 +52,7 @@ import {
   SCORE_WEIGHTS,
   scoreParsedPackage,
 } from "./scoring.js";
+import { runDartAnalyze, type AnalyzerFinding } from "./analyzer.js";
 import { releaseChannel, selectLatestRelease } from "./release-channel.js";
 
 type DatabasePackage = Prisma.PackageGetPayload<{
@@ -865,7 +866,11 @@ export class PrismaRegistryRepository implements RegistryRepository {
   ) {
     const publishedAt = new Date();
     const topics = stringArray(parsed.pubspec.topics);
-    const calculatedScore = scoreParsedPackage(parsed);
+    const dependencies = parsed.pubspec.dependencies && typeof parsed.pubspec.dependencies === "object" && !Array.isArray(parsed.pubspec.dependencies) ? parsed.pubspec.dependencies as Record<string, unknown> : {};
+    const environment = parsed.pubspec.environment && typeof parsed.pubspec.environment === "object" && !Array.isArray(parsed.pubspec.environment) ? parsed.pubspec.environment as Record<string, unknown> : {};
+    const isFlutter = Boolean(dependencies.flutter || environment.flutter || parsed.pubspec.flutter);
+    const findings = await runDartAnalyze(archivePath, isFlutter);
+    const calculatedScore = scoreParsedPackage(parsed, 0, findings);
     await this.prisma.$transaction(async (transaction) => {
       await transaction.$executeRaw`
         SELECT pg_advisory_xact_lock(hashtext(${parsed.name}))

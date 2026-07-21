@@ -26,6 +26,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { scoreParsedPackage } from "./scoring.js";
+import { runDartAnalyze, type AnalyzerFinding } from "./analyzer.js";
 import { releaseChannel, selectLatestRelease } from "./release-channel.js";
 
 export class DemoRegistryRepository implements RegistryRepository {
@@ -434,7 +435,11 @@ export class DemoRegistryRepository implements RegistryRepository {
       throw error;
     }
     try {
-      this.registerParsedArchive(parsed, actor, storedPath);
+      const dependencies = parsed.pubspec.dependencies && typeof parsed.pubspec.dependencies === "object" && !Array.isArray(parsed.pubspec.dependencies) ? parsed.pubspec.dependencies as Record<string, unknown> : {};
+      const environment = parsed.pubspec.environment && typeof parsed.pubspec.environment === "object" && !Array.isArray(parsed.pubspec.environment) ? parsed.pubspec.environment as Record<string, unknown> : {};
+      const isFlutter = Boolean(dependencies.flutter || environment.flutter || parsed.pubspec.flutter);
+      const findings = await runDartAnalyze(storedPath, isFlutter);
+      this.registerParsedArchive(parsed, actor, storedPath, findings);
     } catch (error) {
       if (storedPath) await rm(storedPath, { force: true });
       throw error;
@@ -451,6 +456,7 @@ export class DemoRegistryRepository implements RegistryRepository {
     parsed: Awaited<ReturnType<typeof parsePackageArchive>>,
     actor: PublishActor,
     archivePath: string,
+    findings?: AnalyzerFinding[],
   ) {
     const existing = this.details.get(parsed.name);
     if (existing?.versions.some((item) => item.version === parsed.version))
@@ -489,7 +495,7 @@ export class DemoRegistryRepository implements RegistryRepository {
                 ? ("private" as const)
                 : ("pubdev" as const),
     }));
-    const calculatedScore = scoreParsedPackage(parsed);
+    const calculatedScore = scoreParsedPackage(parsed, 0, findings);
     if (existing) {
       existing.versions.push(packageVersion);
       existing.versions.sort((a, b) => semver.rcompare(a.version, b.version));
