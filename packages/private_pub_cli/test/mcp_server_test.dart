@@ -83,7 +83,7 @@ void main() {
     expect(responses, hasLength(3));
     expect((responses[0]['result'] as Map)['serverInfo'], {
       'name': 'private-pub-registry',
-      'version': '0.1.0',
+      'version': '0.1.1',
     });
     expect((responses[1]['result'] as Map)['tools'], hasLength(8));
     final toolResult = (responses[2]['result'] as Map)['content'] as List;

@@ -41,7 +41,7 @@ export async function getSystemInfo(): Promise<SystemInfo> {
     return response.json();
   } catch {
     return {
-      appVersion: process.env.APP_VERSION?.trim() || "0.1.0",
+      appVersion: process.env.APP_VERSION?.trim() || "0.1.1",
       sdkProvider: "system",
       fvmVersion: null,
       flutterVersion: null,

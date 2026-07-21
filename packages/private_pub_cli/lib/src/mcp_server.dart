@@ -77,7 +77,7 @@ final class PrivatePubMcpServer {
           },
           'serverInfo': {
             'name': 'private-pub-registry',
-            'version': '0.1.0',
+            'version': '0.1.1',
           },
         });
         return;

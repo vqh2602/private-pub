@@ -54,7 +54,7 @@ export async function buildApp() {
   });
   await app.register(swagger, {
     openapi: {
-      info: { title: "Private Pub Registry API", version: "0.1.0" },
+      info: { title: "Private Pub Registry API", version: "0.1.1" },
       tags: [
         { name: "pub", description: "Hosted Pub Repository API V2" },
         { name: "control-plane", description: "Private application API" },

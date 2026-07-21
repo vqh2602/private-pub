@@ -24,7 +24,7 @@ export function clearSystemInfoCache(): void {
 }
 
 async function inspectSystemInfo(): Promise<SystemInfo> {
-  const appVersion = process.env.APP_VERSION?.trim() || "0.1.0";
+  const appVersion = process.env.APP_VERSION?.trim() || "0.1.1";
   const configured = configuredVersions();
   if (configured) {
     return {

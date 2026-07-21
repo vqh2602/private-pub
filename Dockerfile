@@ -27,7 +27,7 @@ FROM node:22-bookworm-slim AS runtime
 ARG TARGETARCH
 ARG FVM_VERSION=3.2.1
 ARG FLUTTER_VERSION=3.41.9
-ARG APP_VERSION=0.1.0
+ARG APP_VERSION=0.1.1
 
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
