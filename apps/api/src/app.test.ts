@@ -719,7 +719,7 @@ describe("registry API", () => {
   it("manages package permissions and enforces authorization", async () => {
     const u1 = `user1_${Date.now()}`;
     const u2 = `user2_${Date.now()}`;
-    
+
     const user1Created = await app.inject({
       method: "POST",
       url: "/v1/admin/accounts",
@@ -730,10 +730,10 @@ describe("registry API", () => {
       url: "/v1/admin/accounts",
       payload: { username: u2, password: "password123", role: "user" },
     });
-    
+
     expect(user1Created.statusCode).toBe(201);
     expect(user2Created.statusCode).toBe(201);
-    
+
     const user1 = user1Created.json().user;
     const user2 = user2Created.json().user;
 
@@ -743,7 +743,7 @@ describe("registry API", () => {
       headers: { authorization: "Bearer demo-admin-token" },
     });
     expect(listRes.statusCode).toBe(200);
-    
+
     const grantRes = await app.inject({
       method: "POST",
       url: "/v1/packages/sample_package/permissions",
@@ -756,7 +756,7 @@ describe("registry API", () => {
       role: "PACKAGE_WRITER",
       username: u1,
     });
-    
+
     const revokeRes = await app.inject({
       method: "DELETE",
       url: `/v1/packages/sample_package/permissions/${user1.id}`,

@@ -12,7 +12,7 @@ console.info(
     service: "private-pub-worker",
     status: "ready",
     mode: process.env.MOCK_ANALYZER === "false" ? "sdk" : "mock",
-  })
+  }),
 );
 
 async function poll() {
@@ -40,7 +40,7 @@ async function poll() {
     });
 
     console.info(
-      `[Worker] Started analysis for ${run.version.package.name} v${run.version.version}`
+      `[Worker] Started analysis for ${run.version.package.name} v${run.version.version}`,
     );
 
     let tempDir = "";
@@ -64,7 +64,7 @@ async function poll() {
           ? pubspec.environment
           : {};
       const isFlutter = Boolean(
-        dependencies.flutter || environment.flutter || pubspec.flutter
+        dependencies.flutter || environment.flutter || pubspec.flutter,
       );
 
       const result = await runPipeline(
@@ -74,7 +74,7 @@ async function poll() {
           workDir: tempDir,
           isFlutter,
         },
-        process.env.MOCK_ANALYZER !== "false"
+        process.env.MOCK_ANALYZER !== "false",
       );
 
       // Save findings and update Score
@@ -118,7 +118,14 @@ async function poll() {
         const tags = ["sdk:dart"];
         if (isFlutter) {
           tags.push("sdk:flutter");
-          tags.push("platform:android", "platform:ios", "platform:web", "platform:linux", "platform:macos", "platform:windows");
+          tags.push(
+            "platform:android",
+            "platform:ios",
+            "platform:web",
+            "platform:linux",
+            "platform:macos",
+            "platform:windows",
+          );
         }
 
         const scoreData = {
@@ -141,7 +148,7 @@ async function poll() {
                   ? "warn"
                   : "fail",
             details: s.findings.map(
-              (f) => `${f.severity.toUpperCase()}: ${f.title} - ${f.message}`
+              (f) => `${f.severity.toUpperCase()}: ${f.title} - ${f.message}`,
             ),
           })),
         };
@@ -166,20 +173,22 @@ async function poll() {
       });
 
       console.info(
-        `[Worker] Finished analysis for ${run.version.package.name} v${run.version.version}. Score: ${result.score.grantedPoints}/${result.score.maxPoints}`
+        `[Worker] Finished analysis for ${run.version.package.name} v${run.version.version}. Score: ${result.score.grantedPoints}/${result.score.maxPoints}`,
       );
     } catch (err) {
       console.error(
         `[Worker] Failed analysis for ${run.version.package.name} v${run.version.version}:`,
-        err
+        err,
       );
-      await prisma.analysisRun.update({
-        where: { id: run.id },
-        data: {
-          status: "FAILED",
-          endedAt: new Date(),
-        },
-      }).catch(() => {});
+      await prisma.analysisRun
+        .update({
+          where: { id: run.id },
+          data: {
+            status: "FAILED",
+            endedAt: new Date(),
+          },
+        })
+        .catch(() => {});
     } finally {
       if (tempDir) {
         await rm(tempDir, { recursive: true, force: true }).catch(() => {});
@@ -200,9 +209,9 @@ const heartbeatInterval = setInterval(
       JSON.stringify({
         service: "private-pub-worker",
         heartbeat: new Date().toISOString(),
-      })
+      }),
     ),
-  60_000
+  60_000,
 );
 
 // Graceful shutdown

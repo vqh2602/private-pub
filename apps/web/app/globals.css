@@ -1610,7 +1610,8 @@ td svg {
   margin-right: 4px;
   font-size: 11px;
 }
-.owned-versions > a {
+.owned-versions > a,
+.owned-versions > button {
   display: flex;
   align-items: center;
   gap: 7px;
@@ -1618,6 +1619,22 @@ td svg {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--surface);
+  color: inherit;
+  font-family: inherit;
+  cursor: pointer;
+  transition:
+    background 0.15s,
+    border-color 0.15s;
+}
+.owned-versions > button {
+  color: var(--blue);
+  font-size: 11px;
+  font-weight: 600;
+}
+.owned-versions > a:hover,
+.owned-versions > button:hover {
+  background: var(--surface-2);
+  border-color: color-mix(in srgb, var(--blue) 35%, var(--line));
 }
 .owned-versions > a > span {
   color: var(--muted);

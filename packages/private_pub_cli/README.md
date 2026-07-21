@@ -152,6 +152,7 @@ Expose authenticated search, package metadata, file listing, and source reading 
 ```
 
 Or connect manually/override host:
+
 ```bash
 ppub mcp --server https://pub.company.dev --token your-pat
 ```

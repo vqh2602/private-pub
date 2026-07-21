@@ -64,7 +64,7 @@ export default function TokensPage() {
     if (typeof window !== "undefined") {
       setApiUrl(
         process.env.NEXT_PUBLIC_API_URL ||
-          `${window.location.protocol}//${window.location.hostname}:4000`
+          `${window.location.protocol}//${window.location.hostname}:4000`,
       );
     }
   }, []);
@@ -393,33 +393,35 @@ export default function TokensPage() {
             </button>
           </div>
 
-          <p style={{ marginTop: "12px", fontSize: "14px", color: "var(--muted)" }}>
-            Chạy lệnh dưới đây rồi dán token truy cập khi được hỏi <code>Enter secret token:</code> (Không chạy token trực tiếp trong lệnh shell).
+          <p
+            style={{
+              marginTop: "12px",
+              fontSize: "14px",
+              color: "var(--muted)",
+            }}
+          >
+            Chạy lệnh dưới đây rồi dán token truy cập khi được hỏi{" "}
+            <code>Enter secret token:</code> (Không chạy token trực tiếp trong
+            lệnh shell).
           </p>
 
           {cliTab === "dart" && (
             <>
-              <CopySnippet>
-                {`dart pub token add ${apiUrl}`}
-              </CopySnippet>
+              <CopySnippet>{`dart pub token add ${apiUrl}`}</CopySnippet>
               <CopySnippet>dart pub get</CopySnippet>
             </>
           )}
 
           {cliTab === "flutter" && (
             <>
-              <CopySnippet>
-                {`flutter pub token add ${apiUrl}`}
-              </CopySnippet>
+              <CopySnippet>{`flutter pub token add ${apiUrl}`}</CopySnippet>
               <CopySnippet>flutter pub get</CopySnippet>
             </>
           )}
 
           {cliTab === "fvm" && (
             <>
-              <CopySnippet>
-                {`fvm dart pub token add ${apiUrl}`}
-              </CopySnippet>
+              <CopySnippet>{`fvm dart pub token add ${apiUrl}`}</CopySnippet>
               <CopySnippet>fvm dart pub get</CopySnippet>
             </>
           )}

@@ -116,18 +116,24 @@ export const registryStatsSchema = z.object({
   packages: z.number().int().nonnegative(),
   versions: z.number().int().nonnegative(),
   analyzedVersions: z.number().int().nonnegative(),
-  health: z.object({
-    api: z.object({ status: z.string(), detail: z.string() }),
-    database: z.object({ status: z.string(), detail: z.string() }),
-    storage: z.object({ status: z.string(), detail: z.string() }),
-    worker: z.object({ status: z.string(), detail: z.string() }),
-  }).optional(),
-  activity: z.array(z.object({
-    id: z.string(),
-    title: z.string(),
-    meta: z.string(),
-    icon: z.string(),
-  })).optional(),
+  health: z
+    .object({
+      api: z.object({ status: z.string(), detail: z.string() }),
+      database: z.object({ status: z.string(), detail: z.string() }),
+      storage: z.object({ status: z.string(), detail: z.string() }),
+      worker: z.object({ status: z.string(), detail: z.string() }),
+    })
+    .optional(),
+  activity: z
+    .array(
+      z.object({
+        id: z.string(),
+        title: z.string(),
+        meta: z.string(),
+        icon: z.string(),
+      }),
+    )
+    .optional(),
 });
 export type RegistryStats = z.infer<typeof registryStatsSchema>;
 

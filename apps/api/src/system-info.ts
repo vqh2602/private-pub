@@ -84,16 +84,22 @@ async function inspectSystemInfo(): Promise<SystemInfo> {
       let flutterVersion: string | null = null;
       let dartVersion: string | null = null;
       try {
-        const flutterResult = await execFileAsync("flutter", ["--version", "--machine"], {
-          timeout: 30_000,
-          maxBuffer: 1024 * 1024,
-        });
+        const flutterResult = await execFileAsync(
+          "flutter",
+          ["--version", "--machine"],
+          {
+            timeout: 30_000,
+            maxBuffer: 1024 * 1024,
+          },
+        );
         const sdk = JSON.parse(flutterResult.stdout) as {
           flutterVersion?: unknown;
           frameworkVersion?: unknown;
           dartSdkVersion?: unknown;
         };
-        flutterVersion = stringValue(sdk.flutterVersion ?? sdk.frameworkVersion);
+        flutterVersion = stringValue(
+          sdk.flutterVersion ?? sdk.frameworkVersion,
+        );
         dartVersion = stringValue(sdk.dartSdkVersion);
       } catch {
         // Flutter is not available or failed
@@ -105,7 +111,9 @@ async function inspectSystemInfo(): Promise<SystemInfo> {
             timeout: 10_000,
             maxBuffer: 1024 * 1024,
           });
-          const match = /version:\s*([^\s]+)/.exec(dartResult.stdout || dartResult.stderr);
+          const match = /version:\s*([^\s]+)/.exec(
+            dartResult.stdout || dartResult.stderr,
+          );
           if (match && match[1]) {
             dartVersion = match[1];
           }

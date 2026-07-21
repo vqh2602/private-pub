@@ -146,69 +146,76 @@ export class PrismaRegistryRepository implements RegistryRepository {
       ]);
     const latency = Date.now() - startTime;
 
-    const activeConnectionsResult = await this.prisma.$queryRaw<{ count: number }[]>`
+    const activeConnectionsResult = await this.prisma.$queryRaw<
+      { count: number }[]
+    >`
       SELECT count(*)::int as count FROM pg_stat_activity WHERE datname = current_database();
     `.catch(() => [{ count: 12 }]);
     const dbConnections = Number(activeConnectionsResult[0]?.count ?? 12);
 
-    const runningWorkersCount = await this.prisma.analysisRun.count({
-      where: { status: "RUNNING" },
-    }).catch(() => 0);
+    const runningWorkersCount = await this.prisma.analysisRun
+      .count({
+        where: { status: "RUNNING" },
+      })
+      .catch(() => 0);
     const workerRunners = Math.max(4, runningWorkersCount);
 
-    const logs = await this.prisma.auditLog.findMany({
-      orderBy: { createdAt: "desc" },
-      take: 10,
-    }).catch(() => []);
+    const logs = await this.prisma.auditLog
+      .findMany({
+        orderBy: { createdAt: "desc" },
+        take: 10,
+      })
+      .catch(() => []);
 
-    const activity = logs.length > 0
-      ? logs.map((log) => {
-          let title = "";
-          let icon = "publish";
-          if (log.action === "package.publish") {
-            title = `${log.subjectId.replace("@", " ")} published`;
-            icon = "publish";
-          } else {
-            title = `${log.action} on ${log.subjectId}`;
-          }
-          const payload = (log.payloadJson as Record<string, unknown>) || {};
-          const publishedBy =
-            typeof payload.publishedBy === "string"
-              ? payload.publishedBy
-              : log.actorId;
-          return {
-            id: log.id.toString(),
-            title,
-            meta: `${publishedBy} · ${log.createdAt.toISOString()}`,
-            icon,
-          };
-        })
-      : [
-          {
-            id: "1",
-            title: "aurora_ui 2.3.1 published",
-            meta: "Vuong Huy · 2026-07-20T16:52:00.000Z",
-            icon: "publish",
-          },
-          {
-            id: "2",
-            title: "PAT created",
-            meta: "CI release bot · 2026-07-20T16:34:00.000Z",
-            icon: "pat",
-          },
-          {
-            id: "3",
-            title: "archive 4.0.9 import queued",
-            meta: "Platform admin · 2026-07-20T16:06:00.000Z",
-            icon: "import",
-          },
-          {
-            id: "4",
-            title: "legacy_networking discontinued",
-            meta: "Package admin · 2026-07-20T05:00:00.000Z",
-            icon: "discontinue",
-          },
-        ];
+    const activity =
+      logs.length > 0
+        ? logs.map((log) => {
+            let title = "";
+            let icon = "publish";
+            if (log.action === "package.publish") {
+              title = `${log.subjectId.replace("@", " ")} published`;
+              icon = "publish";
+            } else {
+              title = `${log.action} on ${log.subjectId}`;
+            }
+            const payload = (log.payloadJson as Record<string, unknown>) || {};
+            const publishedBy =
+              typeof payload.publishedBy === "string"
+                ? payload.publishedBy
+                : log.actorId;
+            return {
+              id: log.id.toString(),
+              title,
+              meta: `${publishedBy} · ${log.createdAt.toISOString()}`,
+              icon,
+            };
+          })
+        : [
+            {
+              id: "1",
+              title: "aurora_ui 2.3.1 published",
+              meta: "Vuong Huy · 2026-07-20T16:52:00.000Z",
+              icon: "publish",
+            },
+            {
+              id: "2",
+              title: "PAT created",
+              meta: "CI release bot · 2026-07-20T16:34:00.000Z",
+              icon: "pat",
+            },
+            {
+              id: "3",
+              title: "archive 4.0.9 import queued",
+              meta: "Platform admin · 2026-07-20T16:06:00.000Z",
+              icon: "import",
+            },
+            {
+              id: "4",
+              title: "legacy_networking discontinued",
+              meta: "Package admin · 2026-07-20T05:00:00.000Z",
+              icon: "discontinue",
+            },
+          ];
 
     return {
       packages,
@@ -216,7 +223,10 @@ export class PrismaRegistryRepository implements RegistryRepository {
       analyzedVersions,
       health: {
         api: { status: "Healthy", detail: `p95 ${latency || 5} ms` },
-        database: { status: "Healthy", detail: `${dbConnections} active connections` },
+        database: {
+          status: "Healthy",
+          detail: `${dbConnections} active connections`,
+        },
         storage: { status: "Healthy", detail: "99.99% available" },
         worker: { status: "Healthy", detail: `${workerRunners} runners ready` },
       },
@@ -912,10 +922,24 @@ export class PrismaRegistryRepository implements RegistryRepository {
   ) {
     const publishedAt = new Date();
     const topics = stringArray(parsed.pubspec.topics);
-    const dependencies = parsed.pubspec.dependencies && typeof parsed.pubspec.dependencies === "object" && !Array.isArray(parsed.pubspec.dependencies) ? parsed.pubspec.dependencies as Record<string, unknown> : {};
-    const environment = parsed.pubspec.environment && typeof parsed.pubspec.environment === "object" && !Array.isArray(parsed.pubspec.environment) ? parsed.pubspec.environment as Record<string, unknown> : {};
-    const isFlutter = Boolean(dependencies.flutter || environment.flutter || parsed.pubspec.flutter);
-    const shouldRunSync = process.env.NODE_ENV === "test" || process.env.RUN_ANALYZER_SYNC === "true";
+    const dependencies =
+      parsed.pubspec.dependencies &&
+      typeof parsed.pubspec.dependencies === "object" &&
+      !Array.isArray(parsed.pubspec.dependencies)
+        ? (parsed.pubspec.dependencies as Record<string, unknown>)
+        : {};
+    const environment =
+      parsed.pubspec.environment &&
+      typeof parsed.pubspec.environment === "object" &&
+      !Array.isArray(parsed.pubspec.environment)
+        ? (parsed.pubspec.environment as Record<string, unknown>)
+        : {};
+    const isFlutter = Boolean(
+      dependencies.flutter || environment.flutter || parsed.pubspec.flutter,
+    );
+    const shouldRunSync =
+      process.env.NODE_ENV === "test" ||
+      process.env.RUN_ANALYZER_SYNC === "true";
     let findings: AnalyzerFinding[] = [];
     if (shouldRunSync) {
       findings = await runDartAnalyze(archivePath, isFlutter);
@@ -1198,7 +1222,8 @@ export class PrismaRegistryRepository implements RegistryRepository {
   ): PackageSummary {
     const score = scoreFromDatabase(latest.scores[0]);
     const pubspec = (latest.pubspecJson as Record<string, unknown>) || {};
-    const repository = typeof pubspec.repository === "string" ? pubspec.repository : null;
+    const repository =
+      typeof pubspec.repository === "string" ? pubspec.repository : null;
     return {
       name: item.name,
       publisherId: item.publisher?.publisherId ?? "local.private",
@@ -1220,7 +1245,8 @@ export class PrismaRegistryRepository implements RegistryRepository {
     item: DatabaseSearchDocument,
   ): PackageSummary {
     const pubspec = (item.version.pubspecJson as Record<string, unknown>) || {};
-    const repository = typeof pubspec.repository === "string" ? pubspec.repository : null;
+    const repository =
+      typeof pubspec.repository === "string" ? pubspec.repository : null;
     return {
       name: item.name,
       publisherId:
@@ -1280,7 +1306,9 @@ export class PrismaRegistryRepository implements RegistryRepository {
     );
   }
 
-  async createPendingUpload(data: Omit<PendingUploadRecord, "createdAt">): Promise<PendingUploadRecord> {
+  async createPendingUpload(
+    data: Omit<PendingUploadRecord, "createdAt">,
+  ): Promise<PendingUploadRecord> {
     const item = await this.prisma.pendingUpload.create({
       data: {
         id: data.id,
@@ -1357,7 +1385,10 @@ export class PrismaRegistryRepository implements RegistryRepository {
     });
     for (const item of items) {
       if (item.temporaryDirectory) {
-        await rm(item.temporaryDirectory, { recursive: true, force: true }).catch(() => {});
+        await rm(item.temporaryDirectory, {
+          recursive: true,
+          force: true,
+        }).catch(() => {});
       }
     }
     const result = await this.prisma.pendingUpload.deleteMany({
@@ -1373,7 +1404,9 @@ export class PrismaRegistryRepository implements RegistryRepository {
     return count;
   }
 
-  async createPendingOauthCode(data: PendingOauthCodeRecord): Promise<PendingOauthCodeRecord> {
+  async createPendingOauthCode(
+    data: PendingOauthCodeRecord,
+  ): Promise<PendingOauthCodeRecord> {
     await this.prisma.pendingOauthCode.create({
       data: {
         code: data.code,
@@ -1389,8 +1422,12 @@ export class PrismaRegistryRepository implements RegistryRepository {
     return data;
   }
 
-  async getPendingOauthCode(code: string): Promise<PendingOauthCodeRecord | null> {
-    const item = await this.prisma.pendingOauthCode.findUnique({ where: { code } });
+  async getPendingOauthCode(
+    code: string,
+  ): Promise<PendingOauthCodeRecord | null> {
+    const item = await this.prisma.pendingOauthCode.findUnique({
+      where: { code },
+    });
     if (!item) return null;
     return {
       code: item.code,
@@ -1420,7 +1457,9 @@ export class PrismaRegistryRepository implements RegistryRepository {
     return result.count;
   }
 
-  async listPackagePermissions(packageName: string): Promise<PackagePermissionRecord[]> {
+  async listPackagePermissions(
+    packageName: string,
+  ): Promise<PackagePermissionRecord[]> {
     const permissions = await this.prisma.packagePermission.findMany({
       where: { package: { name: packageName } },
     });
@@ -1440,7 +1479,10 @@ export class PrismaRegistryRepository implements RegistryRepository {
       subjectId: p.subjectId,
       subjectType: p.subjectType as any,
       role: p.role as any,
-      username: p.subjectType === SubjectType.USER ? accountMap.get(p.subjectId) : undefined,
+      username:
+        p.subjectType === SubjectType.USER
+          ? accountMap.get(p.subjectId)
+          : undefined,
       grantedAt: p.grantedAt.toISOString(),
       grantedBy: p.grantedBy,
     }));
@@ -1519,7 +1561,11 @@ export class PrismaRegistryRepository implements RegistryRepository {
     }
   }
 
-  async hasPackageRole(packageName: string, subjectId: string, role: PackageRole): Promise<boolean> {
+  async hasPackageRole(
+    packageName: string,
+    subjectId: string,
+    role: PackageRole,
+  ): Promise<boolean> {
     const permission = await this.prisma.packagePermission.findFirst({
       where: {
         package: { name: packageName },
@@ -1717,7 +1763,9 @@ function isMissingFile(error: unknown): error is NodeJS.ErrnoException {
   return error instanceof Error && "code" in error && error.code === "ENOENT";
 }
 
-function mapDatabaseRoleToAccountRole(role: DatabaseAccountRole | null | undefined): AccountRole | null {
+function mapDatabaseRoleToAccountRole(
+  role: DatabaseAccountRole | null | undefined,
+): AccountRole | null {
   if (!role) return null;
   return role === DatabaseAccountRole.SUPER_ADMIN
     ? "super_admin"
@@ -1726,7 +1774,9 @@ function mapDatabaseRoleToAccountRole(role: DatabaseAccountRole | null | undefin
       : "user";
 }
 
-function mapAccountRoleToDatabaseRole(role: AccountRole | null | undefined): DatabaseAccountRole | null {
+function mapAccountRoleToDatabaseRole(
+  role: AccountRole | null | undefined,
+): DatabaseAccountRole | null {
   if (!role) return null;
   return role === "super_admin"
     ? DatabaseAccountRole.SUPER_ADMIN

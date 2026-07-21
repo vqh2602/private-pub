@@ -87,8 +87,13 @@ export function Nav() {
           </button>
           <label className="language-select">
             <span className="sr-only">{t.language}</span>
-            <select value={locale} onChange={(event) => setLocale(event.target.value as "vi" | "en")} aria-label={t.language}>
-              <option value="vi">{t.vietnamese}</option><option value="en">{t.english}</option>
+            <select
+              value={locale}
+              onChange={(event) => setLocale(event.target.value as "vi" | "en")}
+              aria-label={t.language}
+            >
+              <option value="vi">{t.vietnamese}</option>
+              <option value="en">{t.english}</option>
             </select>
           </label>
           <Link href={user ? "/account" : "/login"} className="profile">

@@ -15,7 +15,11 @@ import {
 } from "@private-pub/contracts";
 import { z } from "zod";
 import type { PackageVersion } from "@private-pub/contracts";
-import type { PublishActor, RegistryRepository, AccountRole } from "./domain.js";
+import type {
+  PublishActor,
+  RegistryRepository,
+  AccountRole,
+} from "./domain.js";
 import {
   hashSecret,
   issueToken,
@@ -121,7 +125,9 @@ export async function registerRoutes(
     Math.min(3, maxPendingUploadSessions),
   );
   const prunePendingUploads = async () => {
-    const oldestAllowed = new Date(Date.now() - uploadSessionTtlMs).toISOString();
+    const oldestAllowed = new Date(
+      Date.now() - uploadSessionTtlMs,
+    ).toISOString();
     await repository.prunePendingUploads(oldestAllowed);
     await repository.prunePendingOauthCodes(new Date().toISOString());
   };
@@ -168,7 +174,11 @@ export async function registerRoutes(
       isAuthorized = isActorAdmin;
     } else {
       const isCreator = pkg.creatorId === actor.id;
-      const hasPackageAdminRole = await repository.hasPackageRole(name, actor.id, "PACKAGE_ADMIN");
+      const hasPackageAdminRole = await repository.hasPackageRole(
+        name,
+        actor.id,
+        "PACKAGE_ADMIN",
+      );
       isAuthorized = isActorAdmin || isCreator || hasPackageAdminRole;
     }
     if (isAuthorized) return true;
@@ -523,7 +533,10 @@ export async function registerRoutes(
       }
 
       // Check if actor (admin) tries to delete admin/super_admin
-      if (request.actor!.role !== "super_admin" && targetAccount.role !== "user") {
+      if (
+        request.actor!.role !== "super_admin" &&
+        targetAccount.role !== "user"
+      ) {
         return reply.code(403).send({
           error: "forbidden_role",
           message:
@@ -641,7 +654,9 @@ export async function registerRoutes(
             message: "Too many uploads are pending. Retry shortly.",
           },
         });
-    const actorPendingUploads = await repository.getPendingUploadsCount(request.actor!.id);
+    const actorPendingUploads = await repository.getPendingUploadsCount(
+      request.actor!.id,
+    );
     if (actorPendingUploads >= maxPendingUploadSessionsPerActor)
       return reply
         .code(429)
@@ -794,14 +809,11 @@ export async function registerRoutes(
             },
           });
       try {
-        const published = await repository.publishArchive(
-          pending.archivePath,
-          {
-            id: pending.actorId,
-            username: pending.actorUsername,
-            role: pending.actorRole as AccountRole,
-          },
-        );
+        const published = await repository.publishArchive(pending.archivePath, {
+          id: pending.actorId,
+          username: pending.actorUsername,
+          role: pending.actorRole as AccountRole,
+        });
         await repository.deletePendingUpload(uploadId);
         if (pending.temporaryDirectory)
           await rm(pending.temporaryDirectory, {
@@ -1044,7 +1056,8 @@ export async function registerRoutes(
     "/v1/analyses/recompute",
     { preHandler: scopes("packages:publish") },
     async (request, reply) => {
-      const { package: packageName, version } = (request.body as { package?: string; version?: string }) || {};
+      const { package: packageName, version } =
+        (request.body as { package?: string; version?: string }) || {};
       if (!packageName || !version) {
         return reply.code(400).send({
           error: "bad_request",
@@ -1164,7 +1177,7 @@ export async function registerRoutes(
     { preHandler: scopes("packages:publish") },
     async (request, reply) => {
       const { name } = nameParams.parse(request.params);
-      
+
       const pkg = await repository.getPackageMetadata(name);
       if (!pkg) {
         return reply.code(404).send({
@@ -1175,32 +1188,42 @@ export async function registerRoutes(
 
       const creatorId = pkg.creatorId;
       const creatorRole = pkg.creatorRole;
-      
+
       const actor = request.actor!;
-      const isActorAdmin = actor.role === "admin" || actor.role === "super_admin";
-      
+      const isActorAdmin =
+        actor.role === "admin" || actor.role === "super_admin";
+
       let isAuthorized = false;
       if (creatorRole === "admin" || creatorRole === "super_admin") {
         isAuthorized = isActorAdmin;
       } else {
         const isCreator = creatorId === actor.id;
-        const hasPackageAdminRole = await repository.hasPackageRole(name, actor.id, "PACKAGE_ADMIN");
+        const hasPackageAdminRole = await repository.hasPackageRole(
+          name,
+          actor.id,
+          "PACKAGE_ADMIN",
+        );
         isAuthorized = isActorAdmin || isCreator || hasPackageAdminRole;
       }
 
       if (!isAuthorized) {
         return reply.code(403).send({
           error: "forbidden",
-          message: "You are not authorized to manage permissions for this package.",
+          message:
+            "You are not authorized to manage permissions for this package.",
         });
       }
 
-      const body = z.object({
-        username: z.string().min(1),
-        role: z.enum(["PACKAGE_ADMIN", "PACKAGE_WRITER", "VIEWER"]),
-      }).parse(request.body);
+      const body = z
+        .object({
+          username: z.string().min(1),
+          role: z.enum(["PACKAGE_ADMIN", "PACKAGE_WRITER", "VIEWER"]),
+        })
+        .parse(request.body);
 
-      const targetAccount = await repository.findAccountByUsername(body.username);
+      const targetAccount = await repository.findAccountByUsername(
+        body.username,
+      );
       if (!targetAccount) {
         return reply.code(404).send({
           error: "user_not_found",
@@ -1238,21 +1261,27 @@ export async function registerRoutes(
       const creatorRole = pkg.creatorRole;
 
       const actor = request.actor!;
-      const isActorAdmin = actor.role === "admin" || actor.role === "super_admin";
+      const isActorAdmin =
+        actor.role === "admin" || actor.role === "super_admin";
 
       let isAuthorized = false;
       if (creatorRole === "admin" || creatorRole === "super_admin") {
         isAuthorized = isActorAdmin;
       } else {
         const isCreator = creatorId === actor.id;
-        const hasPackageAdminRole = await repository.hasPackageRole(name, actor.id, "PACKAGE_ADMIN");
+        const hasPackageAdminRole = await repository.hasPackageRole(
+          name,
+          actor.id,
+          "PACKAGE_ADMIN",
+        );
         isAuthorized = isActorAdmin || isCreator || hasPackageAdminRole;
       }
 
       if (!isAuthorized) {
         return reply.code(403).send({
           error: "forbidden",
-          message: "You are not authorized to manage permissions for this package.",
+          message:
+            "You are not authorized to manage permissions for this package.",
         });
       }
 
@@ -1264,8 +1293,13 @@ export async function registerRoutes(
       }
 
       const permissions = await repository.listPackagePermissions(name);
-      const packageAdmins = permissions.filter((p) => p.role === "PACKAGE_ADMIN");
-      if (packageAdmins.length === 1 && packageAdmins[0]?.subjectId === subjectId) {
+      const packageAdmins = permissions.filter(
+        (p) => p.role === "PACKAGE_ADMIN",
+      );
+      if (
+        packageAdmins.length === 1 &&
+        packageAdmins[0]?.subjectId === subjectId
+      ) {
         return reply.code(400).send({
           error: "cannot_revoke_last_admin",
           message: "Cannot revoke permissions of the last Package Admin.",

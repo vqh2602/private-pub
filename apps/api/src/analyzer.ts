@@ -37,18 +37,30 @@ function getCommand(isFlutter: boolean) {
   const useFvm = process.env.USE_FVM === "true" || !!process.env.FVM_EXECUTABLE;
   if (useFvm) {
     const fvm = process.env.FVM_EXECUTABLE?.trim() || "fvm";
-    return { command: fvm, args: [isFlutter ? "flutter" : "dart", "analyze", "--format=json"] };
+    return {
+      command: fvm,
+      args: [isFlutter ? "flutter" : "dart", "analyze", "--format=json"],
+    };
   }
-  return { command: isFlutter ? "flutter" : "dart", args: ["analyze", "--format=json"] };
+  return {
+    command: isFlutter ? "flutter" : "dart",
+    args: ["analyze", "--format=json"],
+  };
 }
 
 function getPubGetCommand(isFlutter: boolean) {
   const useFvm = process.env.USE_FVM === "true" || !!process.env.FVM_EXECUTABLE;
   if (useFvm) {
     const fvm = process.env.FVM_EXECUTABLE?.trim() || "fvm";
-    return { command: fvm, args: [isFlutter ? "flutter" : "dart", "pub", "get", "--offline"] };
+    return {
+      command: fvm,
+      args: [isFlutter ? "flutter" : "dart", "pub", "get", "--offline"],
+    };
   }
-  return { command: isFlutter ? "flutter" : "dart", args: ["pub", "get", "--offline"] };
+  return {
+    command: isFlutter ? "flutter" : "dart",
+    args: ["pub", "get", "--offline"],
+  };
 }
 
 async function runCommand(
@@ -106,7 +118,12 @@ export async function runDartAnalyze(
 
     // Run dart analyze
     const analyze = getCommand(isFlutter);
-    const { stdout, code } = await runCommand(analyze.command, analyze.args, tempDir, 45_000);
+    const { stdout, code } = await runCommand(
+      analyze.command,
+      analyze.args,
+      tempDir,
+      45_000,
+    );
 
     let diagnostics: DartDiagnostic[] = [];
     try {

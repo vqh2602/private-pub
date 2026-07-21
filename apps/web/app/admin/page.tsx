@@ -69,7 +69,11 @@ export default async function AdminPage() {
                 <strong>Service health</strong>
               </div>
             </div>
-            <Service icon={<Server />} name="Registry API" detail={health.api.detail} />
+            <Service
+              icon={<Server />}
+              name="Registry API"
+              detail={health.api.detail}
+            />
             <Service
               icon={<Database />}
               name="PostgreSQL"

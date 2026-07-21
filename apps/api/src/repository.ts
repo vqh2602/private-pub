@@ -47,8 +47,14 @@ export class DemoRegistryRepository implements RegistryRepository {
     { accountId: string; expiresAt: string }
   >();
   private readonly pendingUploads = new Map<string, PendingUploadRecord>();
-  private readonly pendingOauthCodes = new Map<string, PendingOauthCodeRecord>();
-  private readonly packagePermissions = new Map<string, PackagePermissionRecord[]>();
+  private readonly pendingOauthCodes = new Map<
+    string,
+    PendingOauthCodeRecord
+  >();
+  private readonly packagePermissions = new Map<
+    string,
+    PackagePermissionRecord[]
+  >();
 
   constructor(
     private readonly storageDirectory?: string,
@@ -453,9 +459,21 @@ export class DemoRegistryRepository implements RegistryRepository {
       throw error;
     }
     try {
-      const dependencies = parsed.pubspec.dependencies && typeof parsed.pubspec.dependencies === "object" && !Array.isArray(parsed.pubspec.dependencies) ? parsed.pubspec.dependencies as Record<string, unknown> : {};
-      const environment = parsed.pubspec.environment && typeof parsed.pubspec.environment === "object" && !Array.isArray(parsed.pubspec.environment) ? parsed.pubspec.environment as Record<string, unknown> : {};
-      const isFlutter = Boolean(dependencies.flutter || environment.flutter || parsed.pubspec.flutter);
+      const dependencies =
+        parsed.pubspec.dependencies &&
+        typeof parsed.pubspec.dependencies === "object" &&
+        !Array.isArray(parsed.pubspec.dependencies)
+          ? (parsed.pubspec.dependencies as Record<string, unknown>)
+          : {};
+      const environment =
+        parsed.pubspec.environment &&
+        typeof parsed.pubspec.environment === "object" &&
+        !Array.isArray(parsed.pubspec.environment)
+          ? (parsed.pubspec.environment as Record<string, unknown>)
+          : {};
+      const isFlutter = Boolean(
+        dependencies.flutter || environment.flutter || parsed.pubspec.flutter,
+      );
       const findings = await runDartAnalyze(storedPath, isFlutter);
       this.registerParsedArchive(parsed, actor, storedPath, findings);
     } catch (error) {
@@ -585,7 +603,10 @@ export class DemoRegistryRepository implements RegistryRepository {
   async getPendingUpload(id: string) {
     return this.pendingUploads.get(id) ?? null;
   }
-  async updatePendingUpload(id: string, data: Partial<Omit<PendingUploadRecord, "id" | "createdAt">>) {
+  async updatePendingUpload(
+    id: string,
+    data: Partial<Omit<PendingUploadRecord, "id" | "createdAt">>,
+  ) {
     const existing = this.pendingUploads.get(id);
     if (!existing) return null;
     const updated = { ...existing, ...data };
@@ -601,7 +622,10 @@ export class DemoRegistryRepository implements RegistryRepository {
     for (const [id, upload] of this.pendingUploads.entries()) {
       if (new Date(upload.createdAt).getTime() < threshold) {
         if (upload.temporaryDirectory) {
-          await rm(upload.temporaryDirectory, { recursive: true, force: true }).catch(() => {});
+          await rm(upload.temporaryDirectory, {
+            recursive: true,
+            force: true,
+          }).catch(() => {});
         }
         this.pendingUploads.delete(id);
         count++;
@@ -611,7 +635,9 @@ export class DemoRegistryRepository implements RegistryRepository {
   }
   async getPendingUploadsCount(actorId?: string) {
     if (actorId) {
-      return [...this.pendingUploads.values()].filter((u) => u.actorId === actorId).length;
+      return [...this.pendingUploads.values()].filter(
+        (u) => u.actorId === actorId,
+      ).length;
     }
     return this.pendingUploads.size;
   }
@@ -638,7 +664,9 @@ export class DemoRegistryRepository implements RegistryRepository {
     return count;
   }
 
-  async listPackagePermissions(packageName: string): Promise<PackagePermissionRecord[]> {
+  async listPackagePermissions(
+    packageName: string,
+  ): Promise<PackagePermissionRecord[]> {
     return this.packagePermissions.get(packageName) ?? [];
   }
 
@@ -651,8 +679,10 @@ export class DemoRegistryRepository implements RegistryRepository {
     const permissions = this.packagePermissions.get(packageName) ?? [];
     const account = await this.findAccountByUsername(targetUsername);
     if (!account) return null;
-    
-    const existingIndex = permissions.findIndex((p) => p.subjectId === account.id);
+
+    const existingIndex = permissions.findIndex(
+      (p) => p.subjectId === account.id,
+    );
     const record: PackagePermissionRecord = {
       subjectId: account.id,
       subjectType: "USER",
@@ -661,30 +691,39 @@ export class DemoRegistryRepository implements RegistryRepository {
       grantedAt: new Date().toISOString(),
       grantedBy,
     };
-    
+
     if (existingIndex !== -1) {
       permissions[existingIndex] = record;
     } else {
       permissions.push(record);
     }
-    
+
     this.packagePermissions.set(packageName, permissions);
     return record;
   }
 
-  async revokePackagePermission(packageName: string, targetSubjectId: string): Promise<boolean> {
+  async revokePackagePermission(
+    packageName: string,
+    targetSubjectId: string,
+  ): Promise<boolean> {
     const permissions = this.packagePermissions.get(packageName) ?? [];
     const index = permissions.findIndex((p) => p.subjectId === targetSubjectId);
     if (index === -1) return false;
-    
+
     permissions.splice(index, 1);
     this.packagePermissions.set(packageName, permissions);
     return true;
   }
 
-  async hasPackageRole(packageName: string, subjectId: string, role: PackageRole): Promise<boolean> {
+  async hasPackageRole(
+    packageName: string,
+    subjectId: string,
+    role: PackageRole,
+  ): Promise<boolean> {
     const permissions = this.packagePermissions.get(packageName) ?? [];
-    return permissions.some((p) => p.subjectId === subjectId && p.role === role);
+    return permissions.some(
+      (p) => p.subjectId === subjectId && p.role === role,
+    );
   }
 
   private async ensureArchiveDirectory() {

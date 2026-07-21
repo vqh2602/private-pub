@@ -36,7 +36,11 @@ export default function AccountPage() {
         return;
       }
       if (!response.ok) {
-        setError(locale === "en" ? "Unable to load account." : "Không thể tải tài khoản.");
+        setError(
+          locale === "en"
+            ? "Unable to load account."
+            : "Không thể tải tài khoản.",
+        );
         setLoading(false);
         return;
       }
@@ -49,11 +53,19 @@ export default function AccountPage() {
     event.preventDefault();
     setError(null);
     if (newPassword !== confirmPassword) {
-      setError(locale === "en" ? "Confirm password does not match." : "Mật khẩu xác nhận không khớp.");
+      setError(
+        locale === "en"
+          ? "Confirm password does not match."
+          : "Mật khẩu xác nhận không khớp.",
+      );
       return;
     }
     if (currentPassword === newPassword) {
-      setError(locale === "en" ? "New password must be different from current password." : "Mật khẩu mới phải khác mật khẩu hiện tại.");
+      setError(
+        locale === "en"
+          ? "New password must be different from current password."
+          : "Mật khẩu mới phải khác mật khẩu hiện tại.",
+      );
       return;
     }
     setLoading(true);
@@ -67,7 +79,12 @@ export default function AccountPage() {
       return;
     }
     const payload = await response.json().catch(() => ({}));
-    setError(payload.message ?? (locale === "en" ? "Unable to change password." : "Không thể đổi mật khẩu."));
+    setError(
+      payload.message ??
+        (locale === "en"
+          ? "Unable to change password."
+          : "Không thể đổi mật khẩu."),
+    );
     setLoading(false);
   }
 
@@ -87,10 +104,15 @@ export default function AccountPage() {
       <div className="content-shell compact-content account-page">
         <div className="page-heading">
           <div>
-            <span className="eyebrow">{locale === "en" ? "Account" : "Tài khoản"}</span>
+            <span className="eyebrow">
+              {locale === "en" ? "Account" : "Tài khoản"}
+            </span>
             <h1>{user?.username}</h1>
             <p>
-              {roleLabel(user?.role, locale)} · {locale === "en" ? "Manage passwords and CLI access." : "Quản lý mật khẩu và quyền truy cập CLI."}
+              {roleLabel(user?.role, locale)} ·{" "}
+              {locale === "en"
+                ? "Manage passwords and CLI access."
+                : "Quản lý mật khẩu và quyền truy cập CLI."}
             </p>
           </div>
           <button className="secondary-button" onClick={logout}>
@@ -117,10 +139,14 @@ export default function AccountPage() {
               <span className="auth-icon">
                 <KeyRound />
               </span>
-              <span className="eyebrow">{locale === "en" ? "Security" : "Bảo mật"}</span>
+              <span className="eyebrow">
+                {locale === "en" ? "Security" : "Bảo mật"}
+              </span>
               <h2>{locale === "en" ? "Change password" : "Đổi mật khẩu"}</h2>
               <p>
-                {locale === "en" ? "Your current session will end after successfully changing the password." : "Phiên đăng nhập hiện tại sẽ kết thúc sau khi đổi thành công."}
+                {locale === "en"
+                  ? "Your current session will end after successfully changing the password."
+                  : "Phiên đăng nhập hiện tại sẽ kết thúc sau khi đổi thành công."}
               </p>
             </div>
             <label>
@@ -134,7 +160,9 @@ export default function AccountPage() {
               />
             </label>
             <label>
-              {locale === "en" ? "New password (at least 10 characters)" : "Mật khẩu mới (tối thiểu 10 ký tự)"}
+              {locale === "en"
+                ? "New password (at least 10 characters)"
+                : "Mật khẩu mới (tối thiểu 10 ký tự)"}
               <input
                 type="password"
                 value={newPassword}
@@ -145,7 +173,9 @@ export default function AccountPage() {
               />
             </label>
             <label>
-              {locale === "en" ? "Confirm new password" : "Xác nhận mật khẩu mới"}
+              {locale === "en"
+                ? "Confirm new password"
+                : "Xác nhận mật khẩu mới"}
               <input
                 type="password"
                 value={confirmPassword}
@@ -162,13 +192,25 @@ export default function AccountPage() {
             )}
             <button className="primary-button" disabled={loading}>
               {loading ? <LoaderCircle className="spin" /> : <ShieldCheck />}
-              {loading ? (locale === "en" ? "Changing…" : "Đang đổi…") : (locale === "en" ? "Change password" : "Đổi mật khẩu")}
+              {loading
+                ? locale === "en"
+                  ? "Changing…"
+                  : "Đang đổi…"
+                : locale === "en"
+                  ? "Change password"
+                  : "Đổi mật khẩu"}
             </button>
           </form>
           <aside className="side-card account-access-card">
             <PackageOpen />
-            <span className="eyebrow">{locale === "en" ? "Developer access" : "Truy cập nhà phát triển"}</span>
-            <h2>{locale === "en" ? "Personal access token" : "Token truy cập cá nhân"}</h2>
+            <span className="eyebrow">
+              {locale === "en" ? "Developer access" : "Truy cập nhà phát triển"}
+            </span>
+            <h2>
+              {locale === "en"
+                ? "Personal access token"
+                : "Token truy cập cá nhân"}
+            </h2>
             <p>
               {locale === "en"
                 ? "Create and revoke tokens for use with dart pub, CI, or package publishing workflows."

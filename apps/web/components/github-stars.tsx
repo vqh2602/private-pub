@@ -2,7 +2,11 @@
 
 import { useEffect, useState } from "react";
 
-export function GitHubStars({ repositoryUrl }: { repositoryUrl: string | null | undefined }) {
+export function GitHubStars({
+  repositoryUrl,
+}: {
+  repositoryUrl: string | null | undefined;
+}) {
   const [stars, setStars] = useState<number | null>(null);
 
   useEffect(() => {

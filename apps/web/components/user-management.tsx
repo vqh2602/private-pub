@@ -23,7 +23,11 @@ export function UserManagement() {
   const [password, setPassword] = useState("");
   const [role, setRole] = useState<AccountRole>("user");
   const [currentRole, setCurrentRole] = useState<AccountRole>("user");
-  const [currentUser, setCurrentUser] = useState<{ id: string; username: string; role: AccountRole } | null>(null);
+  const [currentUser, setCurrentUser] = useState<{
+    id: string;
+    username: string;
+    role: AccountRole;
+  } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
@@ -41,10 +45,16 @@ export function UserManagement() {
     else
       setError(
         response.status === 401
-          ? (locale === "en" ? "Please sign in to manage users." : "Hãy đăng nhập để quản lý người dùng.")
+          ? locale === "en"
+            ? "Please sign in to manage users."
+            : "Hãy đăng nhập để quản lý người dùng."
           : response.status === 403
-            ? (locale === "en" ? "Current account does not have user administration privileges." : "Tài khoản hiện tại không có quyền quản trị người dùng.")
-            : (locale === "en" ? "Unable to load users." : "Không thể tải danh sách người dùng."),
+            ? locale === "en"
+              ? "Current account does not have user administration privileges."
+              : "Tài khoản hiện tại không có quyền quản trị người dùng."
+            : locale === "en"
+              ? "Unable to load users."
+              : "Không thể tải danh sách người dùng.",
       );
     setLoading(false);
   }, [locale]);
@@ -68,8 +78,12 @@ export function UserManagement() {
       setError(
         payload.message ??
           (response.status === 409
-            ? (locale === "en" ? "Username already exists." : "Tên đăng nhập đã tồn tại.")
-            : (locale === "en" ? "Unable to create user." : "Không thể tạo người dùng.")),
+            ? locale === "en"
+              ? "Username already exists."
+              : "Tên đăng nhập đã tồn tại."
+            : locale === "en"
+              ? "Unable to create user."
+              : "Không thể tạo người dùng."),
       );
       setLoading(false);
       return;
@@ -104,7 +118,9 @@ export function UserManagement() {
         const payload = await response.json().catch(() => ({}));
         setError(
           payload.message ??
-            (locale === "en" ? "Unable to delete user." : "Không thể xóa người dùng."),
+            (locale === "en"
+              ? "Unable to delete user."
+              : "Không thể xóa người dùng."),
         );
         setLoading(false);
         return;
@@ -117,7 +133,9 @@ export function UserManagement() {
       await load();
     } catch {
       setError(
-        locale === "en" ? "Unable to delete user." : "Không thể xóa người dùng.",
+        locale === "en"
+          ? "Unable to delete user."
+          : "Không thể xóa người dùng.",
       );
       setLoading(false);
     }
@@ -172,12 +190,18 @@ export function UserManagement() {
               value={role}
               onChange={(event) => setRole(event.target.value as AccountRole)}
             >
-              <option value="user">{locale === "en" ? "User" : "Người dùng"}</option>
+              <option value="user">
+                {locale === "en" ? "User" : "Người dùng"}
+              </option>
               {currentRole === "super_admin" && (
-                <option value="admin">{locale === "en" ? "Admin" : "Quản trị viên"}</option>
+                <option value="admin">
+                  {locale === "en" ? "Admin" : "Quản trị viên"}
+                </option>
               )}
               {currentRole === "super_admin" && (
-                <option value="super_admin">{locale === "en" ? "Super Admin" : "Quản trị viên cấp cao"}</option>
+                <option value="super_admin">
+                  {locale === "en" ? "Super Admin" : "Quản trị viên cấp cao"}
+                </option>
               )}
             </select>
           </label>
@@ -219,7 +243,10 @@ export function UserManagement() {
               <Badge tone={user.isActive ? "green" : "neutral"}>
                 {user.isActive ? "Đang hoạt động" : "Đã khóa"}
               </Badge>
-              {currentUser && user.id !== currentUser.id && (currentUser.role === "super_admin" || (currentUser.role === "admin" && user.role === "user")) ? (
+              {currentUser &&
+              user.id !== currentUser.id &&
+              (currentUser.role === "super_admin" ||
+                (currentUser.role === "admin" && user.role === "user")) ? (
                 <button
                   className="delete-account-button"
                   type="button"

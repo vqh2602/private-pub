@@ -3,5 +3,7 @@
   "version": "0.1.1",
   "private": true,
   "type": "module",
-  "exports": { "./tsconfig": "./tsconfig.json" }
+  "exports": {
+    "./tsconfig": "./tsconfig.json"
+  }
 }

@@ -44,7 +44,9 @@ export default async function PackagePage({
     includeFiles: false,
   });
   if (!detail) notFound();
-  const apiUrl = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000").replace(/\/$/, "");
+  const apiUrl = (
+    process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000"
+  ).replace(/\/$/, "");
   const repositoryUrl = externalUrl(detail.latestVersion.pubspec.repository);
   const documentationUrl =
     externalUrl(detail.latestVersion.pubspec.documentation) ??
@@ -555,18 +557,19 @@ function Installing({
 
       <div className="install-section">
         <p>Or, with the ppub CLI:</p>
-        <CopySnippet>
-          {`ppub add ${name}`}
-        </CopySnippet>
+        <CopySnippet>{`ppub add ${name}`}</CopySnippet>
         <p className="cli-hint">
-          Don't have the CLI? See the <Link href="/tokens">installation guide</Link>.
+          Don't have the CLI? See the{" "}
+          <Link href="/tokens">installation guide</Link>.
         </p>
       </div>
 
       <div className="install-section">
-        <p>Or add it manually to your <code>pubspec.yaml</code>:</p>
+        <p>
+          Or add it manually to your <code>pubspec.yaml</code>:
+        </p>
         <CopySnippet>
-{`dependencies:
+          {`dependencies:
   ${name}:
     hosted: ${apiUrl}
     version: ^${version}`}
@@ -580,11 +583,8 @@ function Installing({
 
       <div className="install-section">
         <p>Now in your Dart code, you can use:</p>
-        <CopySnippet>
-          {`import 'package:${name}/${name}.dart';`}
-        </CopySnippet>
+        <CopySnippet>{`import 'package:${name}/${name}.dart';`}</CopySnippet>
       </div>
     </article>
   );
 }
-

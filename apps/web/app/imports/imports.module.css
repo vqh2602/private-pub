@@ -20,7 +20,9 @@
   background: var(--surface-2);
   cursor: pointer;
   text-align: center;
-  transition: border-color .15s, background .15s;
+  transition:
+    border-color 0.15s,
+    background 0.15s;
 }
 
 .archiveDropzone:hover,
@@ -102,6 +104,11 @@
 }
 
 @media (max-width: 720px) {
-  .importChecks { grid-template-columns: 1fr; }
-  .wizardSteps span:not(:last-child)::after { width: clamp(12px, 9vw, 55px); margin-left: 5px; }
+  .importChecks {
+    grid-template-columns: 1fr;
+  }
+  .wizardSteps span:not(:last-child)::after {
+    width: clamp(12px, 9vw, 55px);
+    margin-left: 5px;
+  }
 }

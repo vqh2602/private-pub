@@ -446,11 +446,16 @@ function languageFor(path: string) {
   return "text";
 }
 
-export async function extractTarGz(archive: Buffer | string, targetDir: string): Promise<void> {
+export async function extractTarGz(
+  archive: Buffer | string,
+  targetDir: string,
+): Promise<void> {
   const extract = tar.extract();
   await new Promise<void>((resolve, reject) => {
     extract.on("entry", (header, stream, next) => {
-      const sanitizedPath = header.name.replaceAll("\\", "/").replace(/^\.\//, "");
+      const sanitizedPath = header.name
+        .replaceAll("\\", "/")
+        .replace(/^\.\//, "");
       if (sanitizedPath.includes("..") || sanitizedPath.startsWith("/")) {
         stream.resume();
         return next();

@@ -1,12 +1,29 @@
-import { randomBytes, scrypt as nodeScrypt, timingSafeEqual } from "node:crypto";
+import {
+  randomBytes,
+  scrypt as nodeScrypt,
+  timingSafeEqual,
+} from "node:crypto";
 const N = 32768;
 const R = 8;
 const P = 3;
 const KEY_LENGTH = 32;
 const MAX_MEMORY = 128 * 1024 * 1024;
 
-function derive(password: string, salt: Buffer, length: number, options: { N: number; r: number; p: number }) {
-  return new Promise<Buffer>((resolve, reject) => nodeScrypt(password, salt, length, { ...options, maxmem: MAX_MEMORY }, (error, value) => error ? reject(error) : resolve(value)));
+function derive(
+  password: string,
+  salt: Buffer,
+  length: number,
+  options: { N: number; r: number; p: number },
+) {
+  return new Promise<Buffer>((resolve, reject) =>
+    nodeScrypt(
+      password,
+      salt,
+      length,
+      { ...options, maxmem: MAX_MEMORY },
+      (error, value) => (error ? reject(error) : resolve(value)),
+    ),
+  );
 }
 
 export async function hashPassword(password: string) {
@@ -17,8 +34,16 @@ export async function hashPassword(password: string) {
 
 export async function verifyPassword(password: string, encoded: string) {
   const [algorithm, rawN, rawR, rawP, rawSalt, rawHash] = encoded.split("$");
-  if (algorithm !== "scrypt" || !rawN || !rawR || !rawP || !rawSalt || !rawHash) return false;
+  if (algorithm !== "scrypt" || !rawN || !rawR || !rawP || !rawSalt || !rawHash)
+    return false;
   const expected = Buffer.from(rawHash, "base64url");
-  const derived = await derive(password, Buffer.from(rawSalt, "base64url"), expected.length, { N: Number(rawN), r: Number(rawR), p: Number(rawP) });
-  return expected.length === derived.length && timingSafeEqual(expected, derived);
+  const derived = await derive(
+    password,
+    Buffer.from(rawSalt, "base64url"),
+    expected.length,
+    { N: Number(rawN), r: Number(rawR), p: Number(rawP) },
+  );
+  return (
+    expected.length === derived.length && timingSafeEqual(expected, derived)
+  );
 }

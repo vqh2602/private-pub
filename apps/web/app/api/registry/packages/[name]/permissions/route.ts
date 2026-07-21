@@ -6,7 +6,10 @@ export async function GET(
   { params }: { params: Promise<{ name: string }> },
 ) {
   const { name } = await params;
-  return registryProxy(request, `/v1/packages/${encodeURIComponent(name)}/permissions`);
+  return registryProxy(
+    request,
+    `/v1/packages/${encodeURIComponent(name)}/permissions`,
+  );
 }
 
 export async function POST(
