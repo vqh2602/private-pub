@@ -163,6 +163,10 @@ export interface RegistryRepository {
     name: string,
     discontinued: boolean,
   ): Promise<PackageSummary | null>;
+  queueAnalysis(
+    name: string,
+    version: string,
+  ): Promise<boolean>;
   createImport(
     input: Omit<ImportJobRecord, "id" | "status" | "createdAt">,
   ): Promise<ImportJobRecord>;

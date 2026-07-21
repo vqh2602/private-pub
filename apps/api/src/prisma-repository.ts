@@ -558,6 +558,25 @@ export class PrismaRegistryRepository implements RegistryRepository {
     );
   }
 
+  async queueAnalysis(name: string, version: string) {
+    const versionRecord = await this.prisma.packageVersion.findFirst({
+      where: {
+        version,
+        package: { name },
+      },
+      select: { id: true },
+    });
+    if (!versionRecord) return false;
+
+    await this.prisma.analysisRun.create({
+      data: {
+        packageVersionId: versionRecord.id,
+        status: "QUEUED",
+      },
+    });
+    return true;
+  }
+
   async createImport(
     input: Omit<ImportJobRecord, "id" | "status" | "createdAt">,
   ) {

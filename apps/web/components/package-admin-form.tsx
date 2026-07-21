@@ -38,6 +38,9 @@ export function PackageAdminForm({
   const [role, setRole] = useState<"PACKAGE_ADMIN" | "PACKAGE_WRITER" | "VIEWER">("PACKAGE_WRITER");
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const [isDiscontinued, setIsDiscontinued] = useState(detail.package.isDiscontinued);
+  const [recomputesLoading, setRecomputesLoading] = useState(false);
+  const [discontinueLoading, setDiscontinueLoading] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -165,6 +168,88 @@ export function PackageAdminForm({
         locale === "en" ? "Unable to revoke collaborator permissions." : "Không thể thu hồi quyền cộng tác viên.",
       );
       setLoading(false);
+    }
+  }
+
+  async function queueAnalysis() {
+    setRecomputesLoading(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      const response = await fetch(`/api/registry/packages/${name}/recompute`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          package: name,
+          version: detail.latestVersion.version,
+        }),
+      });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        setError(
+          payload.message ??
+            (locale === "en" ? "Unable to queue analysis." : "Không thể yêu cầu phân tích."),
+        );
+        return;
+      }
+      setSuccess(
+        locale === "en"
+          ? "Analysis queued successfully. Refresh in a moment to see the updated scores."
+          : "Đã yêu cầu phân tích thành công. Vui lòng làm mới trang sau ít phút để xem điểm số mới.",
+      );
+    } catch {
+      setError(
+        locale === "en" ? "Unable to queue analysis." : "Không thể yêu cầu phân tích.",
+      );
+    } finally {
+      setRecomputesLoading(false);
+    }
+  }
+
+  async function toggleDiscontinue() {
+    const nextState = !isDiscontinued;
+    const confirmMessage = nextState
+      ? (locale === "en"
+          ? `Are you sure you want to discontinue "${name}"?`
+          : `Bạn có chắc chắn muốn ngừng phát triển "${name}" không?`)
+      : (locale === "en"
+          ? `Are you sure you want to undiscontinue "${name}"?`
+          : `Bạn có chắc chắn muốn hủy ngừng phát triển "${name}" không?`);
+
+    if (!window.confirm(confirmMessage)) return;
+
+    setDiscontinueLoading(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      const endpoint = nextState ? "discontinue" : "undiscontinue";
+      const response = await fetch(`/api/registry/packages/${name}/${endpoint}`, {
+        method: "POST",
+      });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        setError(
+          payload.message ??
+            (locale === "en" ? `Unable to update package status.` : `Không thể cập nhật trạng thái package.`),
+        );
+        return;
+      }
+      setIsDiscontinued(nextState);
+      setSuccess(
+        nextState
+          ? (locale === "en"
+              ? `Package "${name}" has been discontinued.`
+              : `Package "${name}" đã được ngừng phát triển thành công.`)
+          : (locale === "en"
+              ? `Package "${name}" is now active.`
+              : `Package "${name}" đã được hủy ngừng phát triển thành công.`)
+      );
+    } catch {
+      setError(
+        locale === "en" ? "Unable to update package status." : "Không thể cập nhật trạng thái package.",
+      );
+    } finally {
+      setDiscontinueLoading(false);
     }
   }
 
@@ -361,14 +446,49 @@ export function PackageAdminForm({
             <strong>{locale === "en" ? "Recompute analysis" : "Tính toán lại phân tích"}</strong>
             <p>{locale === "en" ? "Queue a fresh analysis and score run." : "Xếp hàng phân tích mới và chạy lại điểm số."}</p>
           </div>
-          <button style={{ cursor: "pointer" }}>{locale === "en" ? "Queue analysis" : "Yêu cầu phân tích"}</button>
+          <button
+            onClick={queueAnalysis}
+            disabled={recomputesLoading}
+            style={{
+              cursor: recomputesLoading ? "not-allowed" : "pointer",
+              display: "flex",
+              alignItems: "center",
+              gap: "6px"
+            }}
+          >
+            {recomputesLoading && <LoaderCircle size={14} className="animate-spin" />}
+            {locale === "en" ? "Queue analysis" : "Yêu cầu phân tích"}
+          </button>
         </div>
         <div className="danger-row" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <div>
-            <strong>{locale === "en" ? `Discontinue ${name}` : `Ngừng phát triển ${name}`}</strong>
-            <p>{locale === "en" ? "Keep versions available while directing users to a replacement." : "Giữ các phiên bản cũ trong khi hướng người dùng sang gói thay thế."}</p>
+            <strong>
+              {isDiscontinued
+                ? (locale === "en" ? "Undiscontinue package" : "Hủy ngừng phát triển gói")
+                : (locale === "en" ? `Discontinue ${name}` : `Ngừng phát triển ${name}`)}
+            </strong>
+            <p>
+              {isDiscontinued
+                ? (locale === "en" ? "Remove the discontinued badge and restore normal listing." : "Loại bỏ nhãn ngừng phát triển và khôi phục hiển thị bình thường.")
+                : (locale === "en" ? "Keep versions available while directing users to a replacement." : "Giữ các phiên bản cũ trong khi hướng người dùng sang gói thay thế.")}
+            </p>
           </div>
-          <button className="danger" style={{ cursor: "pointer" }}>{locale === "en" ? "Discontinue" : "Ngừng phát triển"}</button>
+          <button
+            className={isDiscontinued ? "secondary-button" : "danger"}
+            onClick={toggleDiscontinue}
+            disabled={discontinueLoading}
+            style={{
+              cursor: discontinueLoading ? "not-allowed" : "pointer",
+              display: "flex",
+              alignItems: "center",
+              gap: "6px"
+            }}
+          >
+            {discontinueLoading && <LoaderCircle size={14} className="animate-spin" />}
+            {isDiscontinued
+              ? (locale === "en" ? "Undiscontinue" : "Hủy ngừng phát triển")
+              : (locale === "en" ? "Discontinue" : "Ngừng phát triển")}
+          </button>
         </div>
       </div>
     </div>

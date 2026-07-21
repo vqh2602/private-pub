@@ -141,6 +141,43 @@ export async function registerRoutes(
     reply.code(404).send({ error: "not_found" });
     return false;
   };
+  const canAdminPackage = async (
+    request: FastifyRequest,
+    reply: FastifyReply,
+    name: string,
+  ) => {
+    const pkg = await repository.getPackageMetadata(name);
+    if (!pkg) {
+      reply.code(404).send({
+        error: "not_found",
+        message: `Package ${name} was not found.`,
+      });
+      return false;
+    }
+    const actor = request.actor;
+    if (!actor) {
+      reply.code(401).send({
+        error: "unauthorized",
+        message: "A valid session or bearer token is required.",
+      });
+      return false;
+    }
+    const isActorAdmin = actor.role === "admin" || actor.role === "super_admin";
+    let isAuthorized = false;
+    if (pkg.creatorRole === "admin" || pkg.creatorRole === "super_admin") {
+      isAuthorized = isActorAdmin;
+    } else {
+      const isCreator = pkg.creatorId === actor.id;
+      const hasPackageAdminRole = await repository.hasPackageRole(name, actor.id, "PACKAGE_ADMIN");
+      isAuthorized = isActorAdmin || isCreator || hasPackageAdminRole;
+    }
+    if (isAuthorized) return true;
+    reply.code(403).send({
+      error: "forbidden",
+      message: "You are not authorized to manage this package.",
+    });
+    return false;
+  };
   const baseUrl = (request: FastifyRequest) =>
     (
       process.env.PUBLIC_BASE_URL ?? `${request.protocol}://${request.host}`
@@ -1005,13 +1042,31 @@ export async function registerRoutes(
   );
   app.post(
     "/v1/analyses/recompute",
-    { preHandler: scopes("packages:admin") },
-    async (request, reply) =>
-      reply.code(202).send({
+    { preHandler: scopes("packages:publish") },
+    async (request, reply) => {
+      const { package: packageName, version } = (request.body as { package?: string; version?: string }) || {};
+      if (!packageName || !version) {
+        return reply.code(400).send({
+          error: "bad_request",
+          message: "Missing package or version in request body.",
+        });
+      }
+      if (!(await canAdminPackage(request, reply, packageName))) return;
+
+      const queued = await repository.queueAnalysis(packageName, version);
+      if (!queued) {
+        return reply.code(404).send({
+          error: "not_found",
+          message: `Package ${packageName} v${version} not found.`,
+        });
+      }
+
+      return reply.code(202).send({
         id: `ana_${randomUUID().slice(0, 16)}`,
         status: "queued",
         input: request.body,
-      }),
+      });
+    },
   );
 
   app.post(
@@ -1080,9 +1135,10 @@ export async function registerRoutes(
   ] as const) {
     app.post(
       `/v1/packages/:name/${suffix}`,
-      { preHandler: scopes("packages:admin") },
+      { preHandler: scopes("packages:publish") },
       async (request, reply) => {
         const { name } = nameParams.parse(request.params);
+        if (!(await canAdminPackage(request, reply, name))) return;
         return (
           (await repository.setDiscontinued(name, discontinued)) ??
           reply.code(404).send({ error: "not_found" })

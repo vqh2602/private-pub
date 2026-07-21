@@ -286,6 +286,9 @@ export class DemoRegistryRepository implements RegistryRepository {
     item.isDiscontinued = discontinued;
     return structuredClone(item);
   }
+  async queueAnalysis(name: string, version: string) {
+    return true;
+  }
   async createImport(
     input: Omit<ImportJobRecord, "id" | "status" | "createdAt">,
   ) {

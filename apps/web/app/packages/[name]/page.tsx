@@ -44,6 +44,7 @@ export default async function PackagePage({
     includeFiles: false,
   });
   if (!detail) notFound();
+  const apiUrl = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000").replace(/\/$/, "");
   const repositoryUrl = externalUrl(detail.latestVersion.pubspec.repository);
   const documentationUrl =
     externalUrl(detail.latestVersion.pubspec.documentation) ??
@@ -115,10 +116,15 @@ export default async function PackagePage({
               <PackageAdminForm name={name} detail={detail} />
             ) : tab === "changelog" ? (
               <Document title="Changelog" text={detail.changelog} />
+            ) : tab === "installing" ? (
+              <Installing
+                name={name}
+                version={detail.package.latestVersion}
+                apiUrl={apiUrl}
+              />
             ) : (
               <div className="readme-stack">
                 <Document title="About this package" text={detail.readme} />
-                <Dependencies dependencies={detail.dependencies} />
               </div>
             )}
           </section>
@@ -169,6 +175,7 @@ export default async function PackagePage({
                 <dd>{detail.latestVersion.archiveSha256.slice(0, 10)}…</dd>
               </dl>
             </div>
+            <Dependencies dependencies={detail.dependencies} />
             <div className="side-card security">
               <ShieldCheck />
               <div>
@@ -228,6 +235,7 @@ function Dependencies({
     Awaited<ReturnType<typeof getPackage>>
   >["dependencies"];
 }) {
+  if (dependencies.length === 0) return null;
   const runtime = dependencies.filter(
     (dependency) => dependency.scope === "dependencies",
   );
@@ -235,20 +243,15 @@ function Dependencies({
     (dependency) => dependency.scope === "dev_dependencies",
   );
   return (
-    <section className="dependency-card">
-      <div className="dependency-heading">
-        <div>
-          <span className="eyebrow">Package graph</span>
-          <h2>Dependencies</h2>
-          <p>Direct libraries declared by the latest version.</p>
-        </div>
-        <Badge>{runtime.length} runtime</Badge>
-      </div>
-      <DependencyGroup title="Runtime dependencies" items={runtime} />
+    <div className="side-card dependencies-card">
+      <span className="eyebrow">Dependencies</span>
+      {runtime.length > 0 && (
+        <DependencyGroup title="Runtime dependencies" items={runtime} />
+      )}
       {development.length > 0 && (
         <DependencyGroup title="Development dependencies" items={development} />
       )}
-    </section>
+    </div>
   );
 }
 function DependencyGroup({
@@ -528,3 +531,60 @@ function Scores({
     </div>
   );
 }
+
+function Installing({
+  name,
+  version,
+  apiUrl,
+}: {
+  name: string;
+  version: string;
+  apiUrl: string;
+}) {
+  return (
+    <article className="readme installing-guide">
+      <span className="eyebrow">Installing</span>
+      <h2>Use this package as a library</h2>
+
+      <div className="install-section">
+        <p>Run this command:</p>
+        <CopySnippet>
+          {`flutter pub add ${name} --hosted-url ${apiUrl}`}
+        </CopySnippet>
+      </div>
+
+      <div className="install-section">
+        <p>Or, with the ppub CLI:</p>
+        <CopySnippet>
+          {`ppub add ${name}`}
+        </CopySnippet>
+        <p className="cli-hint">
+          Don't have the CLI? See the <Link href="/tokens">installation guide</Link>.
+        </p>
+      </div>
+
+      <div className="install-section">
+        <p>Or add it manually to your <code>pubspec.yaml</code>:</p>
+        <CopySnippet>
+{`dependencies:
+  ${name}:
+    hosted: ${apiUrl}
+    version: ^${version}`}
+        </CopySnippet>
+        <p className="post-install-hint">
+          Then run <code>flutter pub get</code>.
+        </p>
+      </div>
+
+      <h2>Import it</h2>
+
+      <div className="install-section">
+        <p>Now in your Dart code, you can use:</p>
+        <CopySnippet>
+          {`import 'package:${name}/${name}.dart';`}
+        </CopySnippet>
+      </div>
+    </article>
+  );
+}
+
