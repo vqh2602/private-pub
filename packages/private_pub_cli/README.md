@@ -4,17 +4,25 @@
 
 The `outdated` and `upgrade` commands delegate dependency resolution to the installed Dart or Flutter SDK. They deliberately do **not** forward a global `PUB_HOSTED_URL`: Pub has no fallback from a private host to pub.dev, so a global value would make public dependencies fail resolution. Declare the private host on each private dependency instead. Lockfiles, Pub workspaces, authentication configured with `fvm dart pub token`, and the Pub version solver therefore keep their standard behavior.
 
-FVM is required. Every Dart and Flutter SDK subprocess started by this CLI is executed through `fvm`; direct system `dart` or `flutter` executables are never used. Set `FVM_EXECUTABLE` only when the FVM binary is installed at a custom path.
+FVM is optional. By default, every Dart and Flutter SDK subprocess started by this CLI is executed using the system-level `dart` or `flutter` commands. If FVM is desired, set the `USE_FVM=true` environment variable. Set `FVM_EXECUTABLE` to point to a custom FVM binary if needed.
 
 ## Install
 
 ```bash
+# Using system Dart:
+dart pub global activate private_pub_cli
+
+# Or using FVM:
 fvm dart pub global activate private_pub_cli
 ```
 
 During local development:
 
 ```bash
+# Using system Dart:
+dart pub global activate --source path .
+
+# Or using FVM:
 fvm dart pub global activate --source path .
 ```
 
@@ -188,7 +196,7 @@ ppub upgrade --major-versions
 ppub upgrade --major-versions --dry-run
 ```
 
-The CLI automatically chooses `fvm flutter pub` when the project has an SDK dependency on Flutter; otherwise it uses `fvm dart pub`. Override detection with `--sdk=dart` or `--sdk=flutter`.
+The CLI automatically chooses `flutter pub` (or `fvm flutter pub` if FVM is configured) when the project has an SDK dependency on Flutter; otherwise it uses `dart pub` (or `fvm dart pub`). Override detection with `--sdk=dart` or `--sdk=flutter`.
 
 Use `-C path/to/project` to run against another project directory.
 
@@ -203,4 +211,4 @@ Use `-C path/to/project` to run against another project directory.
 
 ## Security
 
-Prefer `fvm dart pub token add` for `outdated` and `upgrade`. For metadata commands, pass the name of an environment variable with `--token-env`; never put a token directly in command arguments or commit it to a pubspec.
+Prefer `dart pub token add` (or `fvm dart pub token add` if using FVM) for `outdated` and `upgrade`. For metadata commands, pass the name of an environment variable with `--token-env`; never put a token directly in command arguments or commit it to a pubspec.

@@ -217,26 +217,20 @@ Package mới mặc định là private và tài khoản phát hành đầu tiê
 
 Analyzer thật chỉ được bật trong production khi job chạy trong sandbox tách biệt và `ANALYZER_SANDBOXED=true`. Runner phải không chứa credential, chạy user không đặc quyền, giới hạn CPU/RAM/process, dùng filesystem tạm và chặn network mặc định. Nếu chưa có runner này, giữ `MOCK_ANALYZER=true`.
 
-FVM là bắt buộc cho toàn bộ lệnh SDK. Repository ghim Flutter trong `.fvmrc`;
-Worker và CLI chỉ gọi `fvm dart` hoặc `fvm flutter`, không gọi trực tiếp SDK
-trong `PATH`. Bộ công cụ đang ghim là FVM `3.2.1`, Flutter `3.41.9` và Dart
-`3.11.5`. Docker image cài sẵn đúng các phiên bản này. Có thể đặt
-`FVM_EXECUTABLE` nếu binary FVM nằm ở đường dẫn khác.
+FVM là tùy chọn (optional). Theo mặc định, Worker và CLI sẽ gọi trực tiếp lệnh `dart` hoặc `flutter` từ hệ thống (`PATH`). Nếu muốn dùng FVM, bạn có thể thiết lập `USE_FVM=true` hoặc đặt biến môi trường `FVM_EXECUTABLE` trỏ tới đường dẫn binary FVM của bạn. Repository ghim Flutter trong `.fvmrc` (bộ công cụ đang ghim là FVM `3.2.1`, Flutter `3.41.9` và Dart `3.11.5`).
 
-Đổi `FLUTTER_VERSION` trong `.env` để chọn SDK của Docker image, sau đó build
-lại bằng `docker compose build --no-cache`. Với local, chạy
-`fvm use <version>` tại thư mục repository để cập nhật `.fvmrc`; nên dùng cùng
-giá trị với `FLUTTER_VERSION`. Phiên bản đang chạy thực tế luôn được API đọc từ
-FVM và hiển thị ở footer Web, vì vậy cấu hình lệch sẽ nhìn thấy ngay.
+Đổi `FLUTTER_VERSION` trong `.env` để chọn SDK của Docker image, sau đó build lại bằng `docker compose build --no-cache`. Với local khi sử dụng FVM, chạy `fvm use <version>` tại thư mục repository để cập nhật `.fvmrc`. Phiên bản đang chạy thực tế luôn được phát hiện từ toolchain đang chạy và hiển thị ở footer Web.
 
 ## Quy trình Dart CLI
 
-Repository có package CLI độc lập tại `packages/private_pub_cli`. Có thể chạy
-trực tiếp trong source bằng `fvm dart run`, hoặc activate toàn cục để dùng lệnh
-`private_pub`:
+Repository có package CLI độc lập tại `packages/private_pub_cli`. Có thể chạy trực tiếp trong source bằng `dart run` (hoặc `fvm dart run`), hoặc activate toàn cục để dùng lệnh `private_pub`:
 
 ```bash
 cd packages/private_pub_cli
+# Nếu dùng SDK hệ thống:
+dart pub global activate --source path .
+
+# Nếu dùng FVM:
 fvm dart pub global activate --source path .
 
 private_pub --host http://localhost:4000 check
@@ -247,7 +241,7 @@ private_pub --host http://localhost:4000 upgrade
 private_pub --host http://localhost:4000 upgrade --major-versions --dry-run
 ```
 
-CLI tự chọn `fvm flutter pub` cho Flutter project và `fvm dart pub` cho Dart project.
+CLI tự chọn `flutter pub` cho Flutter project và `dart pub` cho Dart project (hoặc chạy qua FVM nếu FVM được bật).
 Xem hướng dẫn đầy đủ trong `packages/private_pub_cli/README.md`.
 
 Đăng nhập OAuth trực tiếp từ terminal. CLI mở browser, dùng Authorization Code

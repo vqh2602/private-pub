@@ -47,6 +47,9 @@ final class PrivatePubCli {
               fvmExecutable:
                   (environment ?? Platform.environment)['FVM_EXECUTABLE'] ??
                       'fvm',
+              useFvm: ((environment ?? Platform.environment)['USE_FVM'] == 'true') ||
+                  ((environment ?? Platform.environment)['FVM_EXECUTABLE'] != null &&
+                      (environment ?? Platform.environment)['FVM_EXECUTABLE']!.trim().isNotEmpty),
             ),
         _registryClientFactory = registryClientFactory ??
             ((host, token) => RegistryClient(host: host, token: token));
@@ -696,9 +699,19 @@ final class PrivatePubCli {
         : requestedSdk;
     final environment = Map<String, String>.from(_environment)
       ..remove('PUB_HOSTED_URL');
-    final fvm = _fvmExecutable;
-    final fvmArguments = <String>[sdk, ...arguments];
-    _stderr.writeln('Running: $fvm ${fvmArguments.join(' ')}');
+    
+    final useFvm = _useFvm;
+    final String executable;
+    final List<String> processArguments;
+    if (useFvm) {
+      executable = _fvmExecutable;
+      processArguments = <String>[sdk, ...arguments];
+    } else {
+      executable = sdk;
+      processArguments = arguments;
+    }
+
+    _stderr.writeln('Running: $executable ${processArguments.join(' ')}');
     if (_hasConfiguredHost(global)) {
       _stderr.writeln(
         'Note: PUB_HOSTED_URL is not forwarded to Pub. Declare private '
@@ -707,8 +720,8 @@ final class PrivatePubCli {
       );
     }
     final process = await Process.start(
-      fvm,
-      fvmArguments,
+      executable,
+      processArguments,
       workingDirectory: directory,
       environment: environment,
       mode: ProcessStartMode.inheritStdio,
@@ -792,14 +805,24 @@ final class PrivatePubCli {
       if (skipValidation) '--skip-validation',
       if (ignoreWarnings) '--ignore-warnings',
     ];
+    final useFvm = _useFvm;
+    final String executable;
+    final List<String> processArguments;
+    if (useFvm) {
+      executable = _fvmExecutable;
+      processArguments = <String>['dart', ...arguments];
+    } else {
+      executable = 'dart';
+      processArguments = arguments;
+    }
     _stderr.writeln(
-      'Running: $_fvmExecutable dart pub publish (temporary package copy)',
+      'Running: $executable ${processArguments.join(' ')} (temporary package copy)',
     );
     final environment = Map<String, String>.from(_environment)
       ..remove('PUB_HOSTED_URL');
     final process = await Process.start(
-      _fvmExecutable,
-      ['dart', ...arguments],
+      executable,
+      processArguments,
       workingDirectory: directory,
       environment: environment,
       mode: ProcessStartMode.inheritStdio,
@@ -850,6 +873,10 @@ final class PrivatePubCli {
     return (option != null && option.trim().isNotEmpty) ||
         (_environment['PUB_HOSTED_URL']?.trim().isNotEmpty ?? false);
   }
+
+  bool get _useFvm =>
+      _environment['USE_FVM'] == 'true' ||
+      (_environment['FVM_EXECUTABLE']?.trim().isNotEmpty == true);
 
   String get _fvmExecutable =>
       _environment['FVM_EXECUTABLE']?.trim().isNotEmpty == true

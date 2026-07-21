@@ -20,6 +20,7 @@ import { fileURLToPath } from "node:url";
 import { DemoRegistryRepository, hashToken } from "./repository.js";
 import { hashPassword, verifyPassword } from "./password.js";
 import { issueToken } from "./security.js";
+import { clearSystemInfoCache } from "./system-info.js";
 import { gunzipSync, gzipSync } from "node:zlib";
 import { createHash } from "node:crypto";
 
@@ -205,6 +206,7 @@ describe("registry API", () => {
     });
   });
   it("reports the application and FVM-managed SDK versions", async () => {
+    clearSystemInfoCache();
     process.env.APP_VERSION = "1.2.3";
     process.env.SYSTEM_FVM_VERSION = "3.2.1";
     process.env.SYSTEM_FLUTTER_VERSION = "3.41.9";
@@ -222,6 +224,34 @@ describe("registry API", () => {
       dartVersion: "3.11.5",
       available: true,
     });
+  });
+
+  it("reports the application and system-managed SDK versions when FVM is not used", async () => {
+    clearSystemInfoCache();
+    process.env.APP_VERSION = "1.2.3";
+    const previousFvm = process.env.SYSTEM_FVM_VERSION;
+    delete process.env.SYSTEM_FVM_VERSION;
+    process.env.SYSTEM_FLUTTER_VERSION = "3.41.9";
+    process.env.SYSTEM_DART_VERSION = "3.11.5";
+    try {
+      const response = await app.inject({
+        method: "GET",
+        url: "/v1/system/info",
+      });
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toEqual({
+        appVersion: "1.2.3",
+        sdkProvider: "system",
+        fvmVersion: null,
+        flutterVersion: "3.41.9",
+        dartVersion: "3.11.5",
+        available: true,
+      });
+    } finally {
+      if (previousFvm !== undefined) {
+        process.env.SYSTEM_FVM_VERSION = previousFvm;
+      }
+    }
   });
   it("rejects unsafe cross-origin state changes", async () => {
     const response = await app.inject({

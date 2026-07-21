@@ -53,7 +53,7 @@ describe("analysis pipeline", () => {
       else process.env.ANALYZER_SANDBOXED = previousSandbox;
     }
   });
-  it("runs every SDK command through FVM", () => {
+  it("runs every SDK command through FVM when FVM is configured", () => {
     const previous = process.env.FVM_EXECUTABLE;
     process.env.FVM_EXECUTABLE = "/opt/fvm/bin/fvm";
     try {
@@ -68,6 +68,28 @@ describe("analysis pipeline", () => {
     } finally {
       if (previous === undefined) delete process.env.FVM_EXECUTABLE;
       else process.env.FVM_EXECUTABLE = previous;
+    }
+  });
+
+  it("runs SDK commands directly using system toolchain when FVM is not configured", () => {
+    const previousFvmExec = process.env.FVM_EXECUTABLE;
+    const previousUseFvm = process.env.USE_FVM;
+    delete process.env.FVM_EXECUTABLE;
+    delete process.env.USE_FVM;
+    try {
+      expect(fvmCommand("dart", ["analyze"])).toEqual({
+        command: "dart",
+        args: ["analyze"],
+      });
+      expect(fvmCommand("flutter", ["analyze"])).toEqual({
+        command: "flutter",
+        args: ["analyze"],
+      });
+    } finally {
+      if (previousFvmExec === undefined) delete process.env.FVM_EXECUTABLE;
+      else process.env.FVM_EXECUTABLE = previousFvmExec;
+      if (previousUseFvm === undefined) delete process.env.USE_FVM;
+      else process.env.USE_FVM = previousUseFvm;
     }
   });
 });

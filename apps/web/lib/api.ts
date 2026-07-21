@@ -24,7 +24,7 @@ export interface PackageFilters {
 
 export interface SystemInfo {
   appVersion: string;
-  sdkProvider: "fvm";
+  sdkProvider: "fvm" | "system";
   fvmVersion: string | null;
   flutterVersion: string | null;
   dartVersion: string | null;
@@ -42,7 +42,7 @@ export async function getSystemInfo(): Promise<SystemInfo> {
   } catch {
     return {
       appVersion: process.env.APP_VERSION?.trim() || "0.1.0",
-      sdkProvider: "fvm",
+      sdkProvider: "system",
       fvmVersion: null,
       flutterVersion: null,
       dartVersion: null,

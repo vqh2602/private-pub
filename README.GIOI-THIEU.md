@@ -142,8 +142,8 @@ Archive package được lưu trong Docker volume `archive-data`; dữ liệu Po
 | Database         | PostgreSQL 17, Prisma ORM              | Dữ liệu nghiệp vụ, migration và truy vấn           |
 | Queue/cache      | Valkey 8                               | Hàng đợi xử lý nền và điều phối Worker             |
 | Package storage  | Local disk/Docker volume               | Lưu archive package `.tar.gz`                      |
-| Quản lý SDK      | FVM 3.2.1, Flutter 3.41.9, Dart 3.11.5 | Ghim và đồng bộ SDK giữa local/Docker              |
-| CLI              | Dart 3 qua FVM                         | Đăng nhập, cấu hình, publish và quản lý dependency |
+| Quản lý SDK      | FVM 3.2.1 (Tùy chọn), Flutter, Dart    | Hỗ trợ cả SDK hệ thống hoặc ghim/đồng bộ bằng FVM   |
+| CLI              | Dart 3 (Hệ thống hoặc qua FVM)        | Đăng nhập, cấu hình, publish và quản lý dependency |
 | AI integration   | Model Context Protocol (MCP)           | Kết nối công cụ AI với registry nội bộ             |
 | Kiểm thử         | Vitest, Dart test                      | Unit test và contract test                         |
 | Đóng gói         | Docker, Docker Compose                 | Triển khai Web, API, Worker và hạ tầng             |

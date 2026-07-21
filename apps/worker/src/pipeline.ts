@@ -40,9 +40,16 @@ export function fvmCommand(
   sdk: "dart" | "flutter",
   args: string[],
 ): FvmCommand {
+  const useFvm = process.env.USE_FVM === "true" || !!process.env.FVM_EXECUTABLE;
+  if (useFvm) {
+    return {
+      command: process.env.FVM_EXECUTABLE?.trim() || "fvm",
+      args: [sdk, ...args],
+    };
+  }
   return {
-    command: process.env.FVM_EXECUTABLE?.trim() || "fvm",
-    args: [sdk, ...args],
+    command: sdk,
+    args,
   };
 }
 
