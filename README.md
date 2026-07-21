@@ -226,18 +226,18 @@ dart pub global activate --source path .
 # If using FVM:
 fvm dart pub global activate --source path .
 
-private_pub login http://localhost:4000
-private_pub setup
+ppub login http://localhost:4000
+ppub setup
 ```
 
 Smart publish selects the logged-in registry and injects `publish_to` only in
 a temporary package copy:
 
 ```bash
-private_pub -C path/to/package publish
-private_pub -C path/to/package publish --dry-run
-private_pub -C path/to/monorepo publish --auto
-private_pub -C path/to/monorepo prepare --output /tmp/publish-ready
+ppub -C path/to/package publish
+ppub -C path/to/package publish --dry-run
+ppub -C path/to/monorepo publish --auto
+ppub -C path/to/monorepo prepare --output /tmp/publish-ready
 ```
 
 For AI clients, configure the authenticated MCP stdio server:
@@ -245,14 +245,14 @@ For AI clients, configure the authenticated MCP stdio server:
 ```json
 {
   "mcpServers": {
-    "private-pub": { "command": "private_pub", "args": ["mcp"] }
+    "private-pub": { "command": "ppub", "args": ["mcp"] }
   }
 }
 ```
 
 Manually created PATs remain available for CI. Register an environment-backed
 CI secret with
-`private_pub --host https://pub.company.dev setup --env-var PRIVATE_PUB_TOKEN`.
+`ppub --host https://pub.company.dev setup --env-var PRIVATE_PUB_TOKEN`.
 
 Use either a repository declaration in `pubspec.yaml`:
 
@@ -265,7 +265,7 @@ dependencies:
 
 Do not export `PUB_HOSTED_URL` in a shell that also runs public Pub commands:
 Pub has no fallback to pub.dev, so public packages would be looked up in the
-private registry. Use `private_pub --host http://localhost:4000` for private
+private registry. Use `ppub --host http://localhost:4000` for private
 metadata commands instead. In demo mode, newly published archives are parsed,
 indexed, and stored under `DEMO_STORAGE_DIR` (default
 `.private-pub-data/archives`) so they remain available across API restarts.

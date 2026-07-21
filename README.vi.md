@@ -223,7 +223,7 @@ FVM là tùy chọn (optional). Theo mặc định, Worker và CLI sẽ gọi tr
 
 ## Quy trình Dart CLI
 
-Repository có package CLI độc lập tại `packages/private_pub_cli`. Có thể chạy trực tiếp trong source bằng `dart run` (hoặc `fvm dart run`), hoặc activate toàn cục để dùng lệnh `private_pub`:
+Repository có package CLI độc lập tại `packages/private_pub_cli`. Có thể chạy trực tiếp trong source bằng `dart run` (hoặc `fvm dart run`), hoặc activate toàn cục để dùng lệnh `ppub`:
 
 ```bash
 cd packages/private_pub_cli
@@ -233,12 +233,12 @@ dart pub global activate --source path .
 # Nếu dùng FVM:
 fvm dart pub global activate --source path .
 
-private_pub --host http://localhost:4000 check
-private_pub --host http://localhost:4000 versions aurora_ui
-private_pub --host http://localhost:4000 compare aurora_ui 1.0.0 2.0.0
-private_pub --host http://localhost:4000 outdated
-private_pub --host http://localhost:4000 upgrade
-private_pub --host http://localhost:4000 upgrade --major-versions --dry-run
+ppub --host http://localhost:4000 check
+ppub --host http://localhost:4000 versions aurora_ui
+ppub --host http://localhost:4000 compare aurora_ui 1.0.0 2.0.0
+ppub --host http://localhost:4000 outdated
+ppub --host http://localhost:4000 upgrade
+ppub --host http://localhost:4000 upgrade --major-versions --dry-run
 ```
 
 CLI tự chọn `flutter pub` cho Flutter project và `dart pub` cho Dart project (hoặc chạy qua FVM nếu FVM được bật).
@@ -249,24 +249,24 @@ với PKCE, lưu token quyền tối thiểu trong file cấu hình mode `0600`,
 token với Dart SDK:
 
 ```bash
-private_pub login http://localhost:4000
+ppub login http://localhost:4000
 
 # Đăng ký lại sau khi cài Dart SDK mới:
-private_pub setup
+ppub setup
 ```
 
 Smart publish tự chọn registry đã đăng nhập và tạo một package copy tạm có
 `publish_to`; `pubspec.yaml` trong checkout không bị thay đổi:
 
 ```bash
-private_pub -C path/to/package publish
-private_pub -C path/to/package publish --dry-run
+ppub -C path/to/package publish
+ppub -C path/to/package publish --dry-run
 
 # Monorepo: đổi path/workspace dependency thành hosted reference và publish
 # dependency trước dependent.
-private_pub -C path/to/monorepo publish --auto
-private_pub -C path/to/monorepo publish --auto app_package shared_package
-private_pub -C path/to/monorepo prepare --output /tmp/publish-ready
+ppub -C path/to/monorepo publish --auto
+ppub -C path/to/monorepo publish --auto app_package shared_package
+ppub -C path/to/monorepo prepare --output /tmp/publish-ready
 ```
 
 MCP server dùng cùng credential và cung cấp tool tìm package, đọc metadata,
@@ -276,7 +276,7 @@ liệt kê file và đọc source file cho Cursor/Cline/Claude Desktop:
 {
   "mcpServers": {
     "private-pub": {
-      "command": "private_pub",
+      "command": "ppub",
       "args": ["mcp"]
     }
   }
@@ -284,7 +284,7 @@ liệt kê file và đọc source file cho Cursor/Cline/Claude Desktop:
 ```
 
 PAT thủ công ở trang Tokens vẫn được giữ cho CI; đăng ký secret CI bằng
-`private_pub --host https://pub.company.dev setup --env-var PRIVATE_PUB_TOKEN`.
+`ppub --host https://pub.company.dev setup --env-var PRIVATE_PUB_TOKEN`.
 
 Dùng khai báo repository trong `pubspec.yaml`:
 
@@ -297,7 +297,7 @@ dependencies:
 
 Không nên đặt `PUB_HOSTED_URL` khi project dùng cả pub.dev và registry private:
 Pub không có fallback về pub.dev, nên các package công khai như `flutter_lints`
-cũng sẽ bị tìm ở registry private. `private_pub upgrade` và `private_pub
+cũng sẽ bị tìm ở registry private. `ppub upgrade` và `ppub
 outdated` không truyền biến này sang Pub; hãy dùng khai báo `hosted:` cho từng
 package private như ví dụ trên. Ở demo mode, archive mới publish sẽ được parse,
 lập chỉ mục và lưu trong `DEMO_STORAGE_DIR` (mặc định `.private-pub-data/archives`)

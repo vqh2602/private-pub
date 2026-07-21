@@ -60,7 +60,7 @@ Private Pub Registry cung cấp một điểm quản lý tập trung để:
 
 ### CLI dành cho lập trình viên
 
-CLI `private_pub` hỗ trợ đầy đủ quy trình làm việc với registry:
+CLI `ppub` hỗ trợ đầy đủ quy trình làm việc với registry:
 
 - `login`: mở trình duyệt, đăng nhập OAuth PKCE và lưu credential cục bộ an toàn.
 - `setup`: đăng ký lại token của registry vào Dart SDK.
@@ -169,8 +169,8 @@ scripts/                Script hỗ trợ phát triển
 
 1. Quản trị viên triển khai hệ thống và tạo tài khoản cho thành viên.
 2. Lập trình viên đăng nhập Web để đổi mật khẩu tạm và kiểm tra quyền truy cập.
-3. Lập trình viên chạy `private_pub login <registry-url>` để xác thực OAuth và cấu hình Dart SDK.
-4. Package được publish bằng `private_pub publish` hoặc `private_pub publish --auto` đối với monorepo.
+3. Lập trình viên chạy `ppub login <registry-url>` để xác thực OAuth và cấu hình Dart SDK.
+4. Package được publish bằng `ppub publish` hoặc `ppub publish --auto` đối với monorepo.
 5. API lưu archive và metadata, sau đó gửi tác vụ phân tích qua Valkey cho Worker.
 6. Worker phân tích package, lập chỉ mục và cập nhật điểm chất lượng.
 7. Thành viên khác có thể thêm package vào dự án, tìm kiếm trên Web hoặc tra cứu qua AI/MCP.
