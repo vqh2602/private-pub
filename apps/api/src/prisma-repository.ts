@@ -37,6 +37,7 @@ import {
 } from "./archive.js";
 import type {
   AccountRecord,
+  AccountRole,
   AccessActor,
   ImportJobRecord,
   PackageDetailOptions,
@@ -389,7 +390,7 @@ export class PrismaRegistryRepository implements RegistryRepository {
       latestVersion: mapVersion(latest),
       versions: item.versions.sort(compareDatabaseVersions).map(mapVersion),
       creatorId: item.creatorId,
-      creatorRole: item.creatorRole as any,
+      creatorRole: mapDatabaseRoleToAccountRole(item.creatorRole),
     };
   }
 
@@ -965,7 +966,7 @@ export class PrismaRegistryRepository implements RegistryRepository {
           topics,
           publisherId: publisher.id,
           creatorId: actor.id,
-          creatorRole: actor.role as any,
+          creatorRole: mapAccountRoleToDatabaseRole(actor.role),
         },
       });
       if (!existing)
@@ -1211,7 +1212,7 @@ export class PrismaRegistryRepository implements RegistryRepository {
       hasPreview,
       repository,
       creatorId: item.creatorId,
-      creatorRole: item.creatorRole as any,
+      creatorRole: mapDatabaseRoleToAccountRole(item.creatorRole),
     };
   }
 
@@ -1236,7 +1237,7 @@ export class PrismaRegistryRepository implements RegistryRepository {
       hasPreview: item.hasPreview,
       repository,
       creatorId: item.package.creatorId,
-      creatorRole: item.package.creatorRole as any,
+      creatorRole: mapDatabaseRoleToAccountRole(item.package.creatorRole),
     };
   }
 
@@ -1714,4 +1715,22 @@ function mapAccount(item: {
 }
 function isMissingFile(error: unknown): error is NodeJS.ErrnoException {
   return error instanceof Error && "code" in error && error.code === "ENOENT";
+}
+
+function mapDatabaseRoleToAccountRole(role: DatabaseAccountRole | null | undefined): AccountRole | null {
+  if (!role) return null;
+  return role === DatabaseAccountRole.SUPER_ADMIN
+    ? "super_admin"
+    : role === DatabaseAccountRole.ADMIN
+      ? "admin"
+      : "user";
+}
+
+function mapAccountRoleToDatabaseRole(role: AccountRole | null | undefined): DatabaseAccountRole | null {
+  if (!role) return null;
+  return role === "super_admin"
+    ? DatabaseAccountRole.SUPER_ADMIN
+    : role === "admin"
+      ? DatabaseAccountRole.ADMIN
+      : DatabaseAccountRole.USER;
 }
