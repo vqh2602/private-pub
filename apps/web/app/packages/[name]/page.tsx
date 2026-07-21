@@ -1,6 +1,7 @@
 import { CopySnippet } from "@/components/copy-snippet";
 import { MarkdownPreview } from "@/components/markdown-preview";
 import { PackageTabs } from "@/components/package-tabs";
+import { PackageAdminForm } from "@/components/package-admin-form";
 import { getPackage } from "@/lib/api";
 import { Badge, StatCard } from "@private-pub/ui";
 import type { PackageVersion, ReleaseChannel } from "@private-pub/contracts";
@@ -111,7 +112,7 @@ export default async function PackagePage({
             ) : tab === "scores" ? (
               <Scores detail={detail} />
             ) : tab === "admin" ? (
-              <PackageAdmin name={name} />
+              <PackageAdminForm name={name} detail={detail} />
             ) : tab === "changelog" ? (
               <Document title="Changelog" text={detail.changelog} />
             ) : (
@@ -523,32 +524,6 @@ function Scores({
               )}
           </div>
         ))}
-      </div>
-    </div>
-  );
-}
-function PackageAdmin({ name }: { name: string }) {
-  return (
-    <div className="admin-package">
-      <span className="eyebrow">Package controls</span>
-      <h2>Administration</h2>
-      <p>
-        High-impact actions are protected by package-admin permissions and
-        recorded in the audit log.
-      </p>
-      <div className="danger-row">
-        <div>
-          <strong>Recompute analysis</strong>
-          <p>Queue a fresh analysis and score run.</p>
-        </div>
-        <button>Queue analysis</button>
-      </div>
-      <div className="danger-row">
-        <div>
-          <strong>Discontinue {name}</strong>
-          <p>Keep versions available while directing users to a replacement.</p>
-        </div>
-        <button className="danger">Discontinue</button>
       </div>
     </div>
   );

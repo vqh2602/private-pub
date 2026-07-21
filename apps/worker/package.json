@@ -11,6 +11,15 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
-  "dependencies": { "@private-pub/contracts": "workspace:*" },
-  "devDependencies": { "@types/node": "^22.15.32", "tsx": "^4.20.3", "vitest": "^3.2.4" }
+  "dependencies": {
+    "@private-pub/contracts": "workspace:*",
+    "@private-pub/database": "workspace:*",
+    "tar-stream": "^3.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.32",
+    "@types/tar-stream": "^3.1.4",
+    "tsx": "^4.20.3",
+    "vitest": "^3.2.4"
+  }
 }

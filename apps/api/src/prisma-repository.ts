@@ -44,6 +44,9 @@ import type {
   PublishActor,
   RegistryRepository,
   TokenRecord,
+  PendingUploadRecord,
+  PendingOauthCodeRecord,
+  PackagePermissionRecord,
 } from "./domain.js";
 import { PackageVersionConflictError } from "./domain.js";
 import { hashPassword } from "./password.js";
@@ -371,6 +374,8 @@ export class PrismaRegistryRepository implements RegistryRepository {
         isDiscontinued: true,
         latestVersionId: true,
         versions: true,
+        creatorId: true,
+        creatorRole: true,
       },
     });
     if (!item?.versions.length) return null;
@@ -383,6 +388,8 @@ export class PrismaRegistryRepository implements RegistryRepository {
       isDiscontinued: item.isDiscontinued,
       latestVersion: mapVersion(latest),
       versions: item.versions.sort(compareDatabaseVersions).map(mapVersion),
+      creatorId: item.creatorId,
+      creatorRole: item.creatorRole as any,
     };
   }
 
@@ -582,6 +589,11 @@ export class PrismaRegistryRepository implements RegistryRepository {
     return item ? mapAccount(item) : null;
   }
 
+  async findAccountById(id: string) {
+    const item = await this.prisma.account.findUnique({ where: { id } });
+    return item ? mapAccount(item) : null;
+  }
+
   async listAccounts() {
     return (
       await this.prisma.account.findMany({ orderBy: { username: "asc" } })
@@ -620,6 +632,20 @@ export class PrismaRegistryRepository implements RegistryRepository {
         error.code === "P2002"
       )
         return null;
+      throw error;
+    }
+  }
+
+  async deleteAccount(id: string) {
+    try {
+      await this.prisma.account.delete({ where: { id } });
+      return true;
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === "P2025"
+      )
+        return false;
       throw error;
     }
   }
@@ -869,7 +895,11 @@ export class PrismaRegistryRepository implements RegistryRepository {
     const dependencies = parsed.pubspec.dependencies && typeof parsed.pubspec.dependencies === "object" && !Array.isArray(parsed.pubspec.dependencies) ? parsed.pubspec.dependencies as Record<string, unknown> : {};
     const environment = parsed.pubspec.environment && typeof parsed.pubspec.environment === "object" && !Array.isArray(parsed.pubspec.environment) ? parsed.pubspec.environment as Record<string, unknown> : {};
     const isFlutter = Boolean(dependencies.flutter || environment.flutter || parsed.pubspec.flutter);
-    const findings = await runDartAnalyze(archivePath, isFlutter);
+    const shouldRunSync = process.env.NODE_ENV === "test" || process.env.RUN_ANALYZER_SYNC === "true";
+    let findings: AnalyzerFinding[] = [];
+    if (shouldRunSync) {
+      findings = await runDartAnalyze(archivePath, isFlutter);
+    }
     const calculatedScore = scoreParsedPackage(parsed, 0, findings);
     await this.prisma.$transaction(async (transaction) => {
       await transaction.$executeRaw`
@@ -915,6 +945,8 @@ export class PrismaRegistryRepository implements RegistryRepository {
           description: parsed.description,
           topics,
           publisherId: publisher.id,
+          creatorId: actor.id,
+          creatorRole: actor.role as any,
         },
       });
       if (!existing)
@@ -965,6 +997,14 @@ export class PrismaRegistryRepository implements RegistryRepository {
         data: {
           packageVersionId: versionRecord.id,
           ...scoreData(calculatedScore),
+        },
+      });
+      await transaction.analysisRun.create({
+        data: {
+          packageVersionId: versionRecord.id,
+          status: shouldRunSync ? "COMPLETED" : "QUEUED",
+          startedAt: shouldRunSync ? publishedAt : null,
+          endedAt: shouldRunSync ? new Date() : null,
         },
       });
       const previousLatest = packageRecord.latestVersionId
@@ -1151,6 +1191,8 @@ export class PrismaRegistryRepository implements RegistryRepository {
       score: score.grantedPoints,
       hasPreview,
       repository,
+      creatorId: item.creatorId,
+      creatorRole: item.creatorRole as any,
     };
   }
 
@@ -1174,6 +1216,8 @@ export class PrismaRegistryRepository implements RegistryRepository {
       score: item.score,
       hasPreview: item.hasPreview,
       repository,
+      creatorId: item.package.creatorId,
+      creatorRole: item.package.creatorRole as any,
     };
   }
 
@@ -1214,6 +1258,256 @@ export class PrismaRegistryRepository implements RegistryRepository {
         })
       ).map((item) => item.name),
     );
+  }
+
+  async createPendingUpload(data: Omit<PendingUploadRecord, "createdAt">): Promise<PendingUploadRecord> {
+    const item = await this.prisma.pendingUpload.create({
+      data: {
+        id: data.id,
+        actorId: data.actorId,
+        actorUsername: data.actorUsername,
+        actorRole: data.actorRole,
+        archivePath: data.archivePath,
+        temporaryDirectory: data.temporaryDirectory,
+        filename: data.filename,
+        uploadedAt: data.uploadedAt ? new Date(data.uploadedAt) : null,
+      },
+    });
+    return {
+      ...data,
+      createdAt: item.createdAt.toISOString(),
+    };
+  }
+
+  async getPendingUpload(id: string): Promise<PendingUploadRecord | null> {
+    const item = await this.prisma.pendingUpload.findUnique({ where: { id } });
+    if (!item) return null;
+    return {
+      id: item.id,
+      actorId: item.actorId,
+      actorUsername: item.actorUsername,
+      actorRole: item.actorRole,
+      createdAt: item.createdAt.toISOString(),
+      archivePath: item.archivePath,
+      temporaryDirectory: item.temporaryDirectory,
+      filename: item.filename,
+      uploadedAt: item.uploadedAt?.toISOString() ?? null,
+    };
+  }
+
+  async updatePendingUpload(
+    id: string,
+    data: Partial<Omit<PendingUploadRecord, "id" | "createdAt">>,
+  ): Promise<PendingUploadRecord | null> {
+    const item = await this.prisma.pendingUpload.update({
+      where: { id },
+      data: {
+        archivePath: data.archivePath,
+        temporaryDirectory: data.temporaryDirectory,
+        filename: data.filename,
+        uploadedAt: data.uploadedAt ? new Date(data.uploadedAt) : undefined,
+      },
+    });
+    return {
+      id: item.id,
+      actorId: item.actorId,
+      actorUsername: item.actorUsername,
+      actorRole: item.actorRole,
+      createdAt: item.createdAt.toISOString(),
+      archivePath: item.archivePath,
+      temporaryDirectory: item.temporaryDirectory,
+      filename: item.filename,
+      uploadedAt: item.uploadedAt?.toISOString() ?? null,
+    };
+  }
+
+  async deletePendingUpload(id: string): Promise<boolean> {
+    try {
+      await this.prisma.pendingUpload.delete({ where: { id } });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async prunePendingUploads(expiresBefore: string): Promise<number> {
+    const items = await this.prisma.pendingUpload.findMany({
+      where: { createdAt: { lt: new Date(expiresBefore) } },
+      select: { id: true, temporaryDirectory: true },
+    });
+    for (const item of items) {
+      if (item.temporaryDirectory) {
+        await rm(item.temporaryDirectory, { recursive: true, force: true }).catch(() => {});
+      }
+    }
+    const result = await this.prisma.pendingUpload.deleteMany({
+      where: { id: { in: items.map((i) => i.id) } },
+    });
+    return result.count;
+  }
+
+  async getPendingUploadsCount(actorId?: string): Promise<number> {
+    const count = await this.prisma.pendingUpload.count({
+      where: actorId ? { actorId } : {},
+    });
+    return count;
+  }
+
+  async createPendingOauthCode(data: PendingOauthCodeRecord): Promise<PendingOauthCodeRecord> {
+    await this.prisma.pendingOauthCode.create({
+      data: {
+        code: data.code,
+        subjectId: data.subjectId,
+        username: data.username,
+        role: data.role,
+        scopesJson: data.scopes,
+        redirectUri: data.redirectUri,
+        codeChallenge: data.codeChallenge,
+        expiresAt: new Date(data.expiresAt),
+      },
+    });
+    return data;
+  }
+
+  async getPendingOauthCode(code: string): Promise<PendingOauthCodeRecord | null> {
+    const item = await this.prisma.pendingOauthCode.findUnique({ where: { code } });
+    if (!item) return null;
+    return {
+      code: item.code,
+      subjectId: item.subjectId,
+      username: item.username,
+      role: item.role,
+      scopes: item.scopesJson as string[],
+      redirectUri: item.redirectUri,
+      codeChallenge: item.codeChallenge,
+      expiresAt: item.expiresAt.toISOString(),
+    };
+  }
+
+  async deletePendingOauthCode(code: string): Promise<boolean> {
+    try {
+      await this.prisma.pendingOauthCode.delete({ where: { code } });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async prunePendingOauthCodes(expiresBefore: string): Promise<number> {
+    const result = await this.prisma.pendingOauthCode.deleteMany({
+      where: { expiresAt: { lt: new Date(expiresBefore) } },
+    });
+    return result.count;
+  }
+
+  async listPackagePermissions(packageName: string): Promise<PackagePermissionRecord[]> {
+    const permissions = await this.prisma.packagePermission.findMany({
+      where: { package: { name: packageName } },
+    });
+
+    const subjectIds = permissions
+      .filter((p) => p.subjectType === SubjectType.USER)
+      .map((p) => p.subjectId);
+
+    const accounts = await this.prisma.account.findMany({
+      where: { id: { in: subjectIds } },
+      select: { id: true, username: true },
+    });
+
+    const accountMap = new Map(accounts.map((a) => [a.id, a.username]));
+
+    return permissions.map((p) => ({
+      subjectId: p.subjectId,
+      subjectType: p.subjectType as any,
+      role: p.role as any,
+      username: p.subjectType === SubjectType.USER ? accountMap.get(p.subjectId) : undefined,
+      grantedAt: p.grantedAt.toISOString(),
+      grantedBy: p.grantedBy,
+    }));
+  }
+
+  async grantPackagePermission(
+    packageName: string,
+    targetUsername: string,
+    role: PackageRole,
+    grantedBy: string,
+  ): Promise<PackagePermissionRecord | null> {
+    const pkg = await this.prisma.package.findUnique({
+      where: { name: packageName },
+    });
+    if (!pkg) return null;
+
+    const account = await this.prisma.account.findUnique({
+      where: { username: targetUsername },
+    });
+    if (!account) return null;
+
+    const permission = await this.prisma.packagePermission.upsert({
+      where: {
+        packageId_subjectType_subjectId: {
+          packageId: pkg.id,
+          subjectType: SubjectType.USER,
+          subjectId: account.id,
+        },
+      },
+      update: {
+        role,
+        grantedBy,
+        grantedAt: new Date(),
+      },
+      create: {
+        packageId: pkg.id,
+        subjectType: SubjectType.USER,
+        subjectId: account.id,
+        role,
+        grantedBy,
+      },
+    });
+
+    return {
+      subjectId: permission.subjectId,
+      subjectType: permission.subjectType as any,
+      role: permission.role as any,
+      username: account.username,
+      grantedAt: permission.grantedAt.toISOString(),
+      grantedBy: permission.grantedBy,
+    };
+  }
+
+  async revokePackagePermission(
+    packageName: string,
+    targetSubjectId: string,
+  ): Promise<boolean> {
+    const pkg = await this.prisma.package.findUnique({
+      where: { name: packageName },
+    });
+    if (!pkg) return false;
+
+    try {
+      await this.prisma.packagePermission.delete({
+        where: {
+          packageId_subjectType_subjectId: {
+            packageId: pkg.id,
+            subjectType: SubjectType.USER,
+            subjectId: targetSubjectId,
+          },
+        },
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async hasPackageRole(packageName: string, subjectId: string, role: PackageRole): Promise<boolean> {
+    const permission = await this.prisma.packagePermission.findFirst({
+      where: {
+        package: { name: packageName },
+        subjectId,
+        role,
+      },
+    });
+    return !!permission;
   }
 }
 

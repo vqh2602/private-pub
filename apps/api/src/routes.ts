@@ -15,7 +15,7 @@ import {
 } from "@private-pub/contracts";
 import { z } from "zod";
 import type { PackageVersion } from "@private-pub/contracts";
-import type { PublishActor, RegistryRepository } from "./domain.js";
+import type { PublishActor, RegistryRepository, AccountRole } from "./domain.js";
 import {
   hashSecret,
   issueToken,
@@ -108,18 +108,6 @@ export async function registerRoutes(
   app: FastifyInstance,
   repository: RegistryRepository,
 ) {
-  const oauthCodes = new Map<string, PendingOAuthCode>();
-  const pendingUploads = new Map<
-    string,
-    {
-      actor: PublishActor;
-      createdAt: number;
-      archivePath?: string;
-      temporaryDirectory?: string;
-      filename?: string;
-      uploadedAt?: string;
-    }
-  >();
   const uploadSessionTtlMs = positiveNumber(
     process.env.UPLOAD_SESSION_TTL_MS,
     15 * 60 * 1000,
@@ -133,24 +121,12 @@ export async function registerRoutes(
     Math.min(3, maxPendingUploadSessions),
   );
   const prunePendingUploads = async () => {
-    const oldestAllowed = Date.now() - uploadSessionTtlMs;
-    for (const [id, upload] of pendingUploads) {
-      if (upload.createdAt >= oldestAllowed) continue;
-      pendingUploads.delete(id);
-      if (upload.temporaryDirectory)
-        await rm(upload.temporaryDirectory, { recursive: true, force: true });
-    }
+    const oldestAllowed = new Date(Date.now() - uploadSessionTtlMs).toISOString();
+    await repository.prunePendingUploads(oldestAllowed);
+    await repository.prunePendingOauthCodes(new Date().toISOString());
   };
   app.addHook("onClose", async () => {
-    await Promise.all(
-      [...pendingUploads.values()].map((upload) =>
-        upload.temporaryDirectory
-          ? rm(upload.temporaryDirectory, { recursive: true, force: true })
-          : Promise.resolve(),
-      ),
-    );
-    pendingUploads.clear();
-    oauthCodes.clear();
+    await repository.prunePendingUploads(new Date().toISOString());
   });
   const scopes = (...required: Parameters<typeof requireScopes>[1][]) =>
     requireScopes(repository, ...required);
@@ -236,7 +212,7 @@ export async function registerRoutes(
     validateLoopbackRedirect(input.redirect_uri);
     return { ...input, scopes: oauthScopes(input.scope) };
   };
-  const authorize = (
+  const authorize = async (
     input: ReturnType<typeof oauthInput>,
     actor: {
       id: string;
@@ -264,21 +240,20 @@ export async function registerRoutes(
       ) as Error & {
         statusCode?: number;
       };
+
       error.statusCode = 403;
       throw error;
     }
-    for (const [code, pending] of oauthCodes) {
-      if (pending.expiresAt <= Date.now()) oauthCodes.delete(code);
-    }
     const code = randomBytes(32).toString("base64url");
-    oauthCodes.set(code, {
+    await repository.createPendingOauthCode({
+      code,
       subjectId: actor.id,
-      username: actor.username,
-      role: actor.role,
+      username: actor.username ?? null,
+      role: actor.role ?? null,
       scopes: input.scopes,
       redirectUri: input.redirect_uri,
       codeChallenge: input.code_challenge,
-      expiresAt: Date.now() + 5 * 60_000,
+      expiresAt: new Date(Date.now() + 5 * 60_000).toISOString(),
     });
     const redirect = new URL(input.redirect_uri);
     redirect.searchParams.set("code", code);
@@ -292,7 +267,7 @@ export async function registerRoutes(
     if (actor && actor.authType !== "token") {
       return reply
         .header("cache-control", "no-store")
-        .redirect(authorize(input, actor));
+        .redirect(await authorize(input, actor));
     }
     return reply
       .header("cache-control", "no-store")
@@ -321,7 +296,7 @@ export async function registerRoutes(
           .send(oauthLoginPage(input, "Username or password is incorrect."));
       }
       return reply.header("cache-control", "no-store").redirect(
-        authorize(input, {
+        await authorize(input, {
           id: account.id,
           username: account.username,
           role: account.role,
@@ -334,11 +309,13 @@ export async function registerRoutes(
 
   app.post("/oauth/token", async (request, reply) => {
     const input = oauthTokenSchema.parse(request.body);
-    const pending = oauthCodes.get(input.code);
-    oauthCodes.delete(input.code);
+    const pending = await repository.getPendingOauthCode(input.code);
+    if (pending) {
+      await repository.deletePendingOauthCode(input.code);
+    }
     if (
       !pending ||
-      pending.expiresAt <= Date.now() ||
+      new Date(pending.expiresAt).getTime() <= Date.now() ||
       pending.redirectUri !== input.redirect_uri
     ) {
       return reply.code(400).send({
@@ -359,11 +336,11 @@ export async function registerRoutes(
       repository,
       {
         name: "Private Pub CLI OAuth",
-        scopes: pending.scopes,
+        scopes: pending.scopes as Scope[],
         expiresInDays: 90,
       },
       pending.subjectId,
-      pending.scopes,
+      pending.scopes as Scope[],
     );
     return reply.header("cache-control", "no-store").send({
       access_token: issued.token,
@@ -478,6 +455,57 @@ export async function registerRoutes(
     },
   );
 
+  app.delete(
+    "/v1/admin/accounts/:id",
+    { preHandler: scopes("packages:admin") },
+    async (request, reply) => {
+      if (
+        request.actor!.authType === "token" ||
+        (request.actor!.role !== "admin" &&
+          request.actor!.role !== "super_admin")
+      ) {
+        return reply.code(403).send({ error: "admin_required" });
+      }
+
+      const { id } = request.params as { id: string };
+
+      // Check if trying to delete oneself
+      if (request.actor!.id === id) {
+        return reply.code(400).send({
+          error: "self_deletion_forbidden",
+          message: "You cannot delete your own account.",
+        });
+      }
+
+      const targetAccount = await repository.findAccountById(id);
+      if (!targetAccount) {
+        return reply.code(404).send({
+          error: "not_found",
+          message: "Account not found.",
+        });
+      }
+
+      // Check if actor (admin) tries to delete admin/super_admin
+      if (request.actor!.role !== "super_admin" && targetAccount.role !== "user") {
+        return reply.code(403).send({
+          error: "forbidden_role",
+          message:
+            "Only a super administrator can delete administrator accounts.",
+        });
+      }
+
+      const deleted = await repository.deleteAccount(id);
+      if (!deleted) {
+        return reply.code(404).send({
+          error: "not_found",
+          message: "Account not found.",
+        });
+      }
+
+      return reply.code(204).send();
+    },
+  );
+
   // Hosted Pub Repository API V2 read surface.
   app.get(
     "/api/packages/:name",
@@ -565,7 +593,8 @@ export async function registerRoutes(
 
   const startUpload = async (request: FastifyRequest, reply: FastifyReply) => {
     await prunePendingUploads();
-    if (pendingUploads.size >= maxPendingUploadSessions)
+    const totalPendingCount = await repository.getPendingUploadsCount();
+    if (totalPendingCount >= maxPendingUploadSessions)
       return reply
         .code(503)
         .type(hostedContentType)
@@ -575,9 +604,7 @@ export async function registerRoutes(
             message: "Too many uploads are pending. Retry shortly.",
           },
         });
-    const actorPendingUploads = [...pendingUploads.values()].filter(
-      (upload) => upload.actor.id === request.actor!.id,
-    ).length;
+    const actorPendingUploads = await repository.getPendingUploadsCount(request.actor!.id);
     if (actorPendingUploads >= maxPendingUploadSessionsPerActor)
       return reply
         .code(429)
@@ -590,13 +617,11 @@ export async function registerRoutes(
           },
         });
     const uploadId = randomUUID();
-    pendingUploads.set(uploadId, {
-      actor: {
-        id: request.actor!.id,
-        username: request.actor!.username,
-        role: request.actor!.role,
-      },
-      createdAt: Date.now(),
+    await repository.createPendingUpload({
+      id: uploadId,
+      actorId: request.actor!.id,
+      actorUsername: request.actor!.username ?? "",
+      actorRole: request.actor!.role ?? "user",
     });
     return reply.type(hostedContentType).send({
       url: `${baseUrl(request)}/api/uploads/${uploadId}`,
@@ -621,7 +646,7 @@ export async function registerRoutes(
     async (request, reply) => {
       await prunePendingUploads();
       const { uploadId } = request.params as { uploadId: string };
-      const pending = pendingUploads.get(uploadId);
+      const pending = await repository.getPendingUpload(uploadId);
       if (!pending)
         return reply
           .code(404)
@@ -632,7 +657,7 @@ export async function registerRoutes(
               message: "The upload session is missing or expired.",
             },
           });
-      if (pending.actor.id !== request.actor!.id)
+      if (pending.actorId !== request.actor!.id)
         return reply
           .code(403)
           .type(hostedContentType)
@@ -666,10 +691,12 @@ export async function registerRoutes(
           });
       try {
         const temporary = await saveMultipartUpload(file);
-        pending.archivePath = temporary.path;
-        pending.temporaryDirectory = temporary.directory;
-        pending.filename = file.filename;
-        pending.uploadedAt = new Date().toISOString();
+        await repository.updatePendingUpload(uploadId, {
+          archivePath: temporary.path,
+          temporaryDirectory: temporary.directory,
+          filename: file.filename,
+          uploadedAt: new Date().toISOString(),
+        });
       } catch (error) {
         const statusCode = (error as { statusCode?: number }).statusCode;
         if (statusCode !== 413) {
@@ -707,7 +734,7 @@ export async function registerRoutes(
       const uploadId = String(
         (request.query as { uploadId?: string }).uploadId ?? "",
       );
-      const pending = pendingUploads.get(uploadId);
+      const pending = await repository.getPendingUpload(uploadId);
       if (!pending?.archivePath)
         return reply
           .code(400)
@@ -719,7 +746,7 @@ export async function registerRoutes(
                 "No uploaded archive was found for this publish session.",
             },
           });
-      if (pending.actor.id !== request.actor!.id)
+      if (pending.actorId !== request.actor!.id)
         return reply
           .code(403)
           .type(hostedContentType)
@@ -732,9 +759,13 @@ export async function registerRoutes(
       try {
         const published = await repository.publishArchive(
           pending.archivePath,
-          pending.actor,
+          {
+            id: pending.actorId,
+            username: pending.actorUsername,
+            role: pending.actorRole as AccountRole,
+          },
         );
-        pendingUploads.delete(uploadId);
+        await repository.deletePendingUpload(uploadId);
         if (pending.temporaryDirectory)
           await rm(pending.temporaryDirectory, {
             recursive: true,
@@ -746,7 +777,7 @@ export async function registerRoutes(
           },
         });
       } catch (error) {
-        pendingUploads.delete(uploadId);
+        await repository.deletePendingUpload(uploadId);
         if (pending.temporaryDirectory)
           await rm(pending.temporaryDirectory, {
             recursive: true,
@@ -1059,6 +1090,143 @@ export async function registerRoutes(
       },
     );
   }
+
+  app.get(
+    "/v1/packages/:name/permissions",
+    { preHandler: scopes("packages:read") },
+    async (request, reply) => {
+      const { name } = nameParams.parse(request.params);
+      if (!(await canReadPackage(request, reply, name))) return;
+
+      const items = await repository.listPackagePermissions(name);
+      return { items };
+    },
+  );
+
+  app.post(
+    "/v1/packages/:name/permissions",
+    { preHandler: scopes("packages:publish") },
+    async (request, reply) => {
+      const { name } = nameParams.parse(request.params);
+      
+      const pkg = await repository.getPackageMetadata(name);
+      if (!pkg) {
+        return reply.code(404).send({
+          error: "not_found",
+          message: `Package ${name} was not found.`,
+        });
+      }
+
+      const creatorId = pkg.creatorId;
+      const creatorRole = pkg.creatorRole;
+      
+      const actor = request.actor!;
+      const isActorAdmin = actor.role === "admin" || actor.role === "super_admin";
+      
+      let isAuthorized = false;
+      if (creatorRole === "admin" || creatorRole === "super_admin") {
+        isAuthorized = isActorAdmin;
+      } else {
+        const isCreator = creatorId === actor.id;
+        const hasPackageAdminRole = await repository.hasPackageRole(name, actor.id, "PACKAGE_ADMIN");
+        isAuthorized = isActorAdmin || isCreator || hasPackageAdminRole;
+      }
+
+      if (!isAuthorized) {
+        return reply.code(403).send({
+          error: "forbidden",
+          message: "You are not authorized to manage permissions for this package.",
+        });
+      }
+
+      const body = z.object({
+        username: z.string().min(1),
+        role: z.enum(["PACKAGE_ADMIN", "PACKAGE_WRITER", "VIEWER"]),
+      }).parse(request.body);
+
+      const targetAccount = await repository.findAccountByUsername(body.username);
+      if (!targetAccount) {
+        return reply.code(404).send({
+          error: "user_not_found",
+          message: `User ${body.username} does not exist.`,
+        });
+      }
+
+      const result = await repository.grantPackagePermission(
+        name,
+        targetAccount.username,
+        body.role as any,
+        actor.id,
+      );
+
+      return { success: true, permission: result };
+    },
+  );
+
+  app.delete(
+    "/v1/packages/:name/permissions/:subjectId",
+    { preHandler: scopes("packages:publish") },
+    async (request, reply) => {
+      const { name } = nameParams.parse(request.params);
+      const { subjectId } = request.params as { subjectId: string };
+
+      const pkg = await repository.getPackageMetadata(name);
+      if (!pkg) {
+        return reply.code(404).send({
+          error: "not_found",
+          message: `Package ${name} was not found.`,
+        });
+      }
+
+      const creatorId = pkg.creatorId;
+      const creatorRole = pkg.creatorRole;
+
+      const actor = request.actor!;
+      const isActorAdmin = actor.role === "admin" || actor.role === "super_admin";
+
+      let isAuthorized = false;
+      if (creatorRole === "admin" || creatorRole === "super_admin") {
+        isAuthorized = isActorAdmin;
+      } else {
+        const isCreator = creatorId === actor.id;
+        const hasPackageAdminRole = await repository.hasPackageRole(name, actor.id, "PACKAGE_ADMIN");
+        isAuthorized = isActorAdmin || isCreator || hasPackageAdminRole;
+      }
+
+      if (!isAuthorized) {
+        return reply.code(403).send({
+          error: "forbidden",
+          message: "You are not authorized to manage permissions for this package.",
+        });
+      }
+
+      if (subjectId === creatorId) {
+        return reply.code(400).send({
+          error: "cannot_revoke_creator",
+          message: "Cannot revoke permissions of the package creator.",
+        });
+      }
+
+      const permissions = await repository.listPackagePermissions(name);
+      const packageAdmins = permissions.filter((p) => p.role === "PACKAGE_ADMIN");
+      if (packageAdmins.length === 1 && packageAdmins[0]?.subjectId === subjectId) {
+        return reply.code(400).send({
+          error: "cannot_revoke_last_admin",
+          message: "Cannot revoke permissions of the last Package Admin.",
+        });
+      }
+
+      const ok = await repository.revokePackagePermission(name, subjectId);
+      if (!ok) {
+        return reply.code(404).send({
+          error: "not_found",
+          message: "Permission not found.",
+        });
+      }
+
+      return reply.code(204).send();
+    },
+  );
 }
 
 function positiveNumber(value: string | undefined, fallback: number) {

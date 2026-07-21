@@ -2204,11 +2204,26 @@ td svg {
 }
 .account-row {
   display: grid;
-  grid-template-columns: 38px minmax(150px, 1fr) auto auto;
+  grid-template-columns: 38px minmax(150px, 1fr) auto auto 32px;
   align-items: center;
   gap: 12px;
   padding: 14px 18px;
   border-top: 1px solid var(--line);
+}
+.delete-account-button {
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 6px;
+  color: var(--red);
+  background: transparent;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+.delete-account-button:hover {
+  background: color-mix(in srgb, var(--red) 12%, transparent);
 }
 .account-row:first-child {
   border-top: 0;
@@ -2683,6 +2698,11 @@ footer nav {
   }
   .account-row .badge {
     grid-column: 2;
+  }
+  .account-row .delete-account-button {
+    grid-column: 2;
+    grid-row: 1;
+    justify-self: end;
   }
   .flutter-release-filters label {
     grid-column: auto;

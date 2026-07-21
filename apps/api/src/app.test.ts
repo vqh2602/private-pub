@@ -1,3 +1,9 @@
+import { join } from "node:path";
+import { mkdirSync } from "node:fs";
+
+process.env.TMPDIR = join(process.cwd(), ".tmp-test");
+mkdirSync(process.env.TMPDIR, { recursive: true });
+
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { FastifyInstance } from "fastify";
 import { buildApp } from "./app.js";
@@ -10,7 +16,6 @@ import { packageDetailSchema } from "@private-pub/contracts";
 import { readFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DemoRegistryRepository, hashToken } from "./repository.js";
 import { hashPassword, verifyPassword } from "./password.js";
@@ -45,12 +50,31 @@ function archiveWithVersion(archive: Buffer, from: string, to: string) {
 
 describe("registry API", () => {
   let app: FastifyInstance;
+  let originalPublicBaseUrl: string | undefined;
+  let originalTrustProxy: string | undefined;
+
   beforeAll(async () => {
     process.env.NODE_ENV = "test";
     process.env.DEMO_MODE = "true";
+    originalPublicBaseUrl = process.env.PUBLIC_BASE_URL;
+    delete process.env.PUBLIC_BASE_URL;
+    originalTrustProxy = process.env.TRUST_PROXY;
+    delete process.env.TRUST_PROXY;
     app = await buildApp();
   });
-  afterAll(async () => app.close());
+  afterAll(async () => {
+    if (originalPublicBaseUrl !== undefined) {
+      process.env.PUBLIC_BASE_URL = originalPublicBaseUrl;
+    } else {
+      delete process.env.PUBLIC_BASE_URL;
+    }
+    if (originalTrustProxy !== undefined) {
+      process.env.TRUST_PROXY = originalTrustProxy;
+    } else {
+      delete process.env.TRUST_PROXY;
+    }
+    await app.close();
+  });
 
   it("serves Hosted Pub V2 metadata", async () => {
     const response = await app.inject({
@@ -246,6 +270,57 @@ describe("registry API", () => {
       payload: { username, password: "temporary-password", role: "user" },
     });
     expect(duplicate.statusCode).toBe(409);
+  });
+  it("deletes user accounts and enforces permissions", async () => {
+    // Create a user
+    const username = `dev_to_delete_${Date.now()}`;
+    const created = await app.inject({
+      method: "POST",
+      url: "/v1/admin/accounts",
+      payload: { username, password: "temporary-password", role: "user" },
+    });
+    expect(created.statusCode).toBe(201);
+    const userId = created.json().user.id;
+
+    // Verify it is listed
+    const listedBefore = await app.inject({
+      method: "GET",
+      url: "/v1/admin/accounts",
+    });
+    expect(listedBefore.json().items).toContainEqual(
+      expect.objectContaining({ id: userId }),
+    );
+
+    // Delete the user
+    const deleted = await app.inject({
+      method: "DELETE",
+      url: `/v1/admin/accounts/${userId}`,
+    });
+    expect(deleted.statusCode).toBe(204);
+
+    // Verify it is no longer listed
+    const listedAfter = await app.inject({
+      method: "GET",
+      url: "/v1/admin/accounts",
+    });
+    expect(listedAfter.json().items).not.toContainEqual(
+      expect.objectContaining({ id: userId }),
+    );
+
+    // Try deleting non-existent account
+    const nonExistent = await app.inject({
+      method: "DELETE",
+      url: `/v1/admin/accounts/non-existent-id`,
+    });
+    expect(nonExistent.statusCode).toBe(404);
+
+    // Try self-deletion (demo-admin is the current actor under DEMO_MODE)
+    const selfDelete = await app.inject({
+      method: "DELETE",
+      url: `/v1/admin/accounts/demo-admin`,
+    });
+    expect(selfDelete.statusCode).toBe(400);
+    expect(selfDelete.json().error).toBe("self_deletion_forbidden");
   });
   it("combines SDK, platform, and quality filters", async () => {
     const response = await app.inject({
@@ -609,6 +684,55 @@ describe("registry API", () => {
       url: "/v1/packages/aurora_ui/versions/2.3.1/restore",
     });
     expect(restored.json().retractedAt).toBeNull();
+  });
+
+  it("manages package permissions and enforces authorization", async () => {
+    const u1 = `user1_${Date.now()}`;
+    const u2 = `user2_${Date.now()}`;
+    
+    const user1Created = await app.inject({
+      method: "POST",
+      url: "/v1/admin/accounts",
+      payload: { username: u1, password: "password123", role: "user" },
+    });
+    const user2Created = await app.inject({
+      method: "POST",
+      url: "/v1/admin/accounts",
+      payload: { username: u2, password: "password123", role: "user" },
+    });
+    
+    expect(user1Created.statusCode).toBe(201);
+    expect(user2Created.statusCode).toBe(201);
+    
+    const user1 = user1Created.json().user;
+    const user2 = user2Created.json().user;
+
+    const listRes = await app.inject({
+      method: "GET",
+      url: "/v1/packages/sample_package/permissions",
+      headers: { authorization: "Bearer demo-admin-token" },
+    });
+    expect(listRes.statusCode).toBe(200);
+    
+    const grantRes = await app.inject({
+      method: "POST",
+      url: "/v1/packages/sample_package/permissions",
+      headers: { authorization: "Bearer demo-admin-token" },
+      payload: { username: u1, role: "PACKAGE_WRITER" },
+    });
+    expect(grantRes.statusCode).toBe(200);
+    expect(grantRes.json().permission).toMatchObject({
+      subjectId: user1.id,
+      role: "PACKAGE_WRITER",
+      username: u1,
+    });
+    
+    const revokeRes = await app.inject({
+      method: "DELETE",
+      url: `/v1/packages/sample_package/permissions/${user1.id}`,
+      headers: { authorization: "Bearer demo-admin-token" },
+    });
+    expect(revokeRes.statusCode).toBe(204);
   });
 });
 

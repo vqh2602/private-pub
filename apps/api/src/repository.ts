@@ -10,6 +10,10 @@ import type {
   PublishActor,
   RegistryRepository,
   TokenRecord,
+  PendingUploadRecord,
+  PendingOauthCodeRecord,
+  PackagePermissionRecord,
+  PackageRole,
 } from "./domain.js";
 import { PackageVersionConflictError } from "./domain.js";
 import { parsePackageArchive, readArchiveTextFile } from "./archive.js";
@@ -42,6 +46,9 @@ export class DemoRegistryRepository implements RegistryRepository {
     string,
     { accountId: string; expiresAt: string }
   >();
+  private readonly pendingUploads = new Map<string, PendingUploadRecord>();
+  private readonly pendingOauthCodes = new Map<string, PendingOauthCodeRecord>();
+  private readonly packagePermissions = new Map<string, PackagePermissionRecord[]>();
 
   constructor(
     private readonly storageDirectory?: string,
@@ -186,6 +193,8 @@ export class DemoRegistryRepository implements RegistryRepository {
       isDiscontinued: detail.package.isDiscontinued,
       latestVersion: detail.latestVersion,
       versions: detail.versions,
+      creatorId: detail.package.creatorId ?? null,
+      creatorRole: detail.package.creatorRole ?? null,
     });
   }
 
@@ -305,6 +314,9 @@ export class DemoRegistryRepository implements RegistryRepository {
         null,
     );
   }
+  async findAccountById(id: string) {
+    return structuredClone(this.accounts.get(id) ?? null);
+  }
   async listAccounts() {
     return structuredClone(
       [...this.accounts.values()].sort((a, b) =>
@@ -334,6 +346,9 @@ export class DemoRegistryRepository implements RegistryRepository {
     };
     this.accounts.set(account.id, account);
     return structuredClone(account);
+  }
+  async deleteAccount(id: string) {
+    return this.accounts.delete(id);
   }
   async createSession(accountId: string, tokenHash: string, expiresAt: string) {
     this.sessions.set(tokenHash, { accountId, expiresAt });
@@ -557,6 +572,116 @@ export class DemoRegistryRepository implements RegistryRepository {
   }
   async getArchivePath(name: string, version: string) {
     return this.archivePaths.get(`${name}@${version}`) ?? null;
+  }
+
+  async createPendingUpload(data: Omit<PendingUploadRecord, "createdAt">) {
+    const record = { ...data, createdAt: new Date().toISOString() };
+    this.pendingUploads.set(data.id, record);
+    return record;
+  }
+  async getPendingUpload(id: string) {
+    return this.pendingUploads.get(id) ?? null;
+  }
+  async updatePendingUpload(id: string, data: Partial<Omit<PendingUploadRecord, "id" | "createdAt">>) {
+    const existing = this.pendingUploads.get(id);
+    if (!existing) return null;
+    const updated = { ...existing, ...data };
+    this.pendingUploads.set(id, updated);
+    return updated;
+  }
+  async deletePendingUpload(id: string) {
+    return this.pendingUploads.delete(id);
+  }
+  async prunePendingUploads(expiresBefore: string) {
+    const threshold = new Date(expiresBefore).getTime();
+    let count = 0;
+    for (const [id, upload] of this.pendingUploads.entries()) {
+      if (new Date(upload.createdAt).getTime() < threshold) {
+        if (upload.temporaryDirectory) {
+          await rm(upload.temporaryDirectory, { recursive: true, force: true }).catch(() => {});
+        }
+        this.pendingUploads.delete(id);
+        count++;
+      }
+    }
+    return count;
+  }
+  async getPendingUploadsCount(actorId?: string) {
+    if (actorId) {
+      return [...this.pendingUploads.values()].filter((u) => u.actorId === actorId).length;
+    }
+    return this.pendingUploads.size;
+  }
+
+  async createPendingOauthCode(data: PendingOauthCodeRecord) {
+    this.pendingOauthCodes.set(data.code, data);
+    return data;
+  }
+  async getPendingOauthCode(code: string) {
+    return this.pendingOauthCodes.get(code) ?? null;
+  }
+  async deletePendingOauthCode(code: string) {
+    return this.pendingOauthCodes.delete(code);
+  }
+  async prunePendingOauthCodes(expiresBefore: string) {
+    const threshold = new Date(expiresBefore).getTime();
+    let count = 0;
+    for (const [code, oauthCode] of this.pendingOauthCodes.entries()) {
+      if (new Date(oauthCode.expiresAt).getTime() < threshold) {
+        this.pendingOauthCodes.delete(code);
+        count++;
+      }
+    }
+    return count;
+  }
+
+  async listPackagePermissions(packageName: string): Promise<PackagePermissionRecord[]> {
+    return this.packagePermissions.get(packageName) ?? [];
+  }
+
+  async grantPackagePermission(
+    packageName: string,
+    targetUsername: string,
+    role: PackageRole,
+    grantedBy: string,
+  ): Promise<PackagePermissionRecord | null> {
+    const permissions = this.packagePermissions.get(packageName) ?? [];
+    const account = await this.findAccountByUsername(targetUsername);
+    if (!account) return null;
+    
+    const existingIndex = permissions.findIndex((p) => p.subjectId === account.id);
+    const record: PackagePermissionRecord = {
+      subjectId: account.id,
+      subjectType: "USER",
+      role,
+      username: account.username,
+      grantedAt: new Date().toISOString(),
+      grantedBy,
+    };
+    
+    if (existingIndex !== -1) {
+      permissions[existingIndex] = record;
+    } else {
+      permissions.push(record);
+    }
+    
+    this.packagePermissions.set(packageName, permissions);
+    return record;
+  }
+
+  async revokePackagePermission(packageName: string, targetSubjectId: string): Promise<boolean> {
+    const permissions = this.packagePermissions.get(packageName) ?? [];
+    const index = permissions.findIndex((p) => p.subjectId === targetSubjectId);
+    if (index === -1) return false;
+    
+    permissions.splice(index, 1);
+    this.packagePermissions.set(packageName, permissions);
+    return true;
+  }
+
+  async hasPackageRole(packageName: string, subjectId: string, role: PackageRole): Promise<boolean> {
+    const permissions = this.packagePermissions.get(packageName) ?? [];
+    return permissions.some((p) => p.subjectId === subjectId && p.role === role);
   }
 
   private async ensureArchiveDirectory() {

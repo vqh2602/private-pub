@@ -82,6 +82,20 @@ export interface PackageMetadata {
   isDiscontinued: boolean;
   latestVersion: PackageVersion;
   versions: PackageVersion[];
+  creatorId?: string | null;
+  creatorRole?: AccountRole | null;
+}
+
+export type PackageRole = "PACKAGE_ADMIN" | "PACKAGE_WRITER" | "VIEWER";
+export type SubjectType = "USER" | "GROUP" | "SERVICE_ACCOUNT";
+
+export interface PackagePermissionRecord {
+  subjectId: string;
+  subjectType: SubjectType;
+  role: PackageRole;
+  username?: string;
+  grantedAt: string;
+  grantedBy: string;
 }
 
 export interface PackageSearchFilters {
@@ -155,6 +169,7 @@ export interface RegistryRepository {
   getImport(id: string): Promise<ImportJobRecord | null>;
   listImports(): Promise<ImportJobRecord[]>;
   findAccountByUsername(username: string): Promise<AccountRecord | null>;
+  findAccountById(id: string): Promise<AccountRecord | null>;
   listAccounts(): Promise<AccountRecord[]>;
   createAccount(input: {
     username: string;
@@ -162,6 +177,7 @@ export interface RegistryRepository {
     role: AccountRole;
     mustChangePassword: boolean;
   }): Promise<AccountRecord | null>;
+  deleteAccount(id: string): Promise<boolean>;
   createSession(
     accountId: string,
     tokenHash: string,
@@ -184,4 +200,45 @@ export interface RegistryRepository {
     actor: PublishActor,
   ): Promise<PublishArchiveResult>;
   getArchivePath(name: string, version: string): Promise<string | null>;
+
+  createPendingUpload(data: Omit<PendingUploadRecord, "createdAt">): Promise<PendingUploadRecord>;
+  getPendingUpload(id: string): Promise<PendingUploadRecord | null>;
+  updatePendingUpload(id: string, data: Partial<Omit<PendingUploadRecord, "id" | "createdAt">>): Promise<PendingUploadRecord | null>;
+  deletePendingUpload(id: string): Promise<boolean>;
+  prunePendingUploads(expiresBefore: string): Promise<number>;
+  getPendingUploadsCount(actorId?: string): Promise<number>;
+
+  createPendingOauthCode(data: PendingOauthCodeRecord): Promise<PendingOauthCodeRecord>;
+  getPendingOauthCode(code: string): Promise<PendingOauthCodeRecord | null>;
+  deletePendingOauthCode(code: string): Promise<boolean>;
+  prunePendingOauthCodes(expiresBefore: string): Promise<number>;
+
+  listPackagePermissions(packageName: string): Promise<PackagePermissionRecord[]>;
+  grantPackagePermission(packageName: string, targetUsername: string, role: PackageRole, grantedBy: string): Promise<PackagePermissionRecord | null>;
+  revokePackagePermission(packageName: string, targetSubjectId: string): Promise<boolean>;
+  hasPackageRole(packageName: string, subjectId: string, role: PackageRole): Promise<boolean>;
 }
+
+export interface PendingUploadRecord {
+  id: string;
+  actorId: string;
+  actorUsername: string;
+  actorRole: string;
+  createdAt: string;
+  archivePath?: string | null;
+  temporaryDirectory?: string | null;
+  filename?: string | null;
+  uploadedAt?: string | null;
+}
+
+export interface PendingOauthCodeRecord {
+  code: string;
+  subjectId: string;
+  username?: string | null;
+  role?: string | null;
+  scopes: string[];
+  redirectUri: string;
+  codeChallenge: string;
+  expiresAt: string;
+}
+

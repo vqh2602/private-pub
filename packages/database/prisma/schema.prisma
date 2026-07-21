@@ -105,6 +105,8 @@ model Package {
   publisher            Publisher?          @relation(fields: [publisherId], references: [id])
   latestVersion        PackageVersion?     @relation("LatestPackageVersion", fields: [latestVersionId], references: [id], onDelete: SetNull)
   versions             PackageVersion[]    @relation("PackageVersions")
+  creatorId            String?             @map("creator_id")
+  creatorRole          AccountRole?        @map("creator_role")
   permissions          PackagePermission[]
   searchDocument       SearchDocument?
 
@@ -342,3 +344,31 @@ model AuditLog {
   @@index([subjectType, subjectId, createdAt(sort: Desc)])
   @@map("audit_logs")
 }
+
+model PendingUpload {
+  id                 String    @id
+  actorId            String    @map("actor_id")
+  actorUsername      String    @map("actor_username")
+  actorRole          String    @map("actor_role")
+  createdAt          DateTime  @default(now()) @map("created_at")
+  archivePath        String?   @map("archive_path")
+  temporaryDirectory String?   @map("temporary_directory")
+  filename           String?
+  uploadedAt         DateTime? @map("uploaded_at")
+
+  @@map("pending_uploads")
+}
+
+model PendingOauthCode {
+  code          String   @id
+  subjectId     String   @map("subject_id")
+  username      String?
+  role          String?
+  scopesJson    Json     @map("scopes_json")
+  redirectUri   String   @map("redirect_uri")
+  codeChallenge String   @map("code_challenge")
+  expiresAt     DateTime @map("expires_at")
+
+  @@map("pending_oauth_codes")
+}
+

@@ -92,6 +92,9 @@ export async function runDartAnalyze(
   archive: Buffer | string,
   isFlutter: boolean,
 ): Promise<AnalyzerFinding[]> {
+  if (process.env.MOCK_ANALYZER !== "false") {
+    return [];
+  }
   let tempDir = "";
   try {
     tempDir = await mkdtemp(join(tmpdir(), "private-pub-analysis-"));

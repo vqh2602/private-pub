@@ -75,9 +75,12 @@ services:
       NODE_ENV: ${NODE_ENV:-development}
       API_URL: http://api:4000
       REDIS_URL: redis://redis:6379
+      ARCHIVE_STORAGE_DIR: /data/archives
+      DATABASE_URL: ${DOCKER_DATABASE_URL:-postgresql://private_pub:private_pub@postgres:5432/private_pub?schema=public}
       APP_VERSION: ${APP_VERSION:-0.1.0}
       FVM_EXECUTABLE: /usr/local/bin/fvm
       FVM_CACHE_PATH: /opt/fvm-cache
+    volumes: [archive-data:/data/archives]
     depends_on:
       api: { condition: service_healthy }
       redis: { condition: service_healthy }

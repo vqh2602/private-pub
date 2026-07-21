@@ -77,6 +77,8 @@ export const packageSummarySchema = z.object({
   score: z.number(),
   hasPreview: z.boolean(),
   repository: z.string().nullable().optional(),
+  creatorId: z.string().nullable().optional(),
+  creatorRole: z.enum(["super_admin", "admin", "user"]).nullable().optional(),
 });
 export type PackageSummary = z.infer<typeof packageSummarySchema>;
 

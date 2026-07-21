@@ -6,6 +6,7 @@ import {
   CheckCircle2,
   LoaderCircle,
   Plus,
+  Trash2,
   UserPlus,
   Users,
   X,
@@ -22,6 +23,7 @@ export function UserManagement() {
   const [password, setPassword] = useState("");
   const [role, setRole] = useState<AccountRole>("user");
   const [currentRole, setCurrentRole] = useState<AccountRole>("user");
+  const [currentUser, setCurrentUser] = useState<{ id: string; username: string; role: AccountRole } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
@@ -30,7 +32,11 @@ export function UserManagement() {
       fetch("/api/admin/accounts", { cache: "no-store" }),
       fetch("/api/auth/me", { cache: "no-store" }),
     ]);
-    if (meResponse.ok) setCurrentRole((await meResponse.json()).user.role);
+    if (meResponse.ok) {
+      const data = await meResponse.json();
+      setCurrentUser(data.user);
+      setCurrentRole(data.user.role);
+    }
     if (response.ok) setUsers((await response.json()).items);
     else
       setError(
@@ -78,6 +84,43 @@ export function UserManagement() {
     setRole("user");
     setOpen(false);
     await load();
+  }
+
+  async function deleteUser(id: string, username: string) {
+    const confirmMessage =
+      locale === "en"
+        ? `Are you sure you want to delete account "${username}"?`
+        : `Bạn có chắc chắn muốn xóa tài khoản "${username}" không?`;
+    if (!window.confirm(confirmMessage)) return;
+
+    setLoading(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      const response = await fetch(`/api/admin/accounts/${id}`, {
+        method: "DELETE",
+      });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        setError(
+          payload.message ??
+            (locale === "en" ? "Unable to delete user." : "Không thể xóa người dùng."),
+        );
+        setLoading(false);
+        return;
+      }
+      setSuccess(
+        locale === "en"
+          ? `Account "${username}" deleted successfully.`
+          : `Đã xóa tài khoản "${username}" thành công.`,
+      );
+      await load();
+    } catch {
+      setError(
+        locale === "en" ? "Unable to delete user." : "Không thể xóa người dùng.",
+      );
+      setLoading(false);
+    }
   }
 
   return (
@@ -176,6 +219,18 @@ export function UserManagement() {
               <Badge tone={user.isActive ? "green" : "neutral"}>
                 {user.isActive ? "Đang hoạt động" : "Đã khóa"}
               </Badge>
+              {currentUser && user.id !== currentUser.id && (currentUser.role === "super_admin" || (currentUser.role === "admin" && user.role === "user")) ? (
+                <button
+                  className="delete-account-button"
+                  type="button"
+                  onClick={() => deleteUser(user.id, user.username)}
+                  title={locale === "en" ? "Delete account" : "Xóa tài khoản"}
+                >
+                  <Trash2 size={15} />
+                </button>
+              ) : (
+                <div style={{ width: 32 }} />
+              )}
             </div>
           ))}
           {!users.length && !error && (
