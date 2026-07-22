@@ -2648,6 +2648,25 @@ footer nav {
   margin-top: 3px;
 }
 
+/* Topics sidebar card styling */
+.topics-card.side-card {
+  padding: 18px;
+}
+.topics-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+.topics-list a {
+  text-decoration: none;
+}
+.topics-list a:hover .badge {
+  background: var(--blue-soft);
+  color: var(--blue);
+  border-color: color-mix(in srgb, var(--blue) 25%, var(--line));
+}
+
 @media (max-width: 720px) {
   .content-shell {
     width: min(100% - 24px, 1180px);

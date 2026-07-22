@@ -177,6 +177,18 @@ export default async function PackagePage({
                 <dd>{detail.latestVersion.archiveSha256.slice(0, 10)}…</dd>
               </dl>
             </div>
+            {detail.package.topics && detail.package.topics.length > 0 && (
+              <div className="side-card topics-card">
+                <span className="eyebrow">Topics</span>
+                <div className="topics-list">
+                  {detail.package.topics.map((topic) => (
+                    <Link key={topic} href={`/?q=${encodeURIComponent(topic)}`}>
+                      <Badge>{topic}</Badge>
+                    </Link>
+                  ))}
+                </div>
+              </div>
+            )}
             <Dependencies dependencies={detail.dependencies} />
             <div className="side-card security">
               <ShieldCheck />
